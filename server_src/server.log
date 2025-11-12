@@ -178,3 +178,8 @@
 [2025-11-12 18:02:27] [INFO] Client 2: Closing connection
 [2025-11-12 18:02:29] [INFO] Client 1: Connection closed by client
 [2025-11-12 18:02:29] [INFO] Client 1: Closing connection
+[2025-11-12 18:08:43] [INFO] Received signal 2, shutting down...
+[2025-11-12 18:08:43] [INFO] Server stopped accepting connections
+[2025-11-12 18:08:43] [INFO] Server shutting down...
+[2025-11-12 18:08:43] [INFO] Room system shutdown
+[2025-11-12 18:08:43] [INFO] Server shutdown complete

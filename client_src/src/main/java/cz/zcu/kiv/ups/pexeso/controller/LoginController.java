@@ -186,6 +186,19 @@ public class LoginController implements MessageListener {
 
         // Parse basic responses
         if (message.startsWith(ProtocolConstants.CMD_WELCOME)) {
+            // Parse client ID from WELCOME message
+            // Format: WELCOME <client_id> [message]
+            String[] parts = message.split(" ");
+            if (parts.length >= 2) {
+                try {
+                    int clientId = Integer.parseInt(parts[1]);
+                    connection.setClientId(clientId);
+                    log("Client ID: " + clientId);
+                } catch (NumberFormatException e) {
+                    log("Warning: Could not parse client ID from WELCOME");
+                }
+            }
+
             log("Successfully authenticated!");
             // Switch to lobby view
             switchToLobby();

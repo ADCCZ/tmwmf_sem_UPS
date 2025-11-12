@@ -10,6 +10,12 @@
 #define MAX_NICK_LENGTH 32
 #define MAX_ROOM_NAME_LENGTH 64
 
+// Timeout constants (in seconds)
+#define PING_INTERVAL 15           // Send PING every 15 seconds
+#define PONG_TIMEOUT 5             // Expect PONG within 5 seconds
+#define SHORT_DISCONNECT_TIMEOUT 60    // < 60s = short disconnect (reconnect possible)
+#define LONG_DISCONNECT_TIMEOUT 60     // >= 60s = long disconnect (player removed)
+
 // Protocol commands (client to server)
 #define CMD_HELLO "HELLO"
 #define CMD_LIST_ROOMS "LIST_ROOMS"

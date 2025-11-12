@@ -346,6 +346,10 @@ public class GameController implements MessageListener {
                 handleGameStart(message);
                 break;
 
+            case "GAME_STATE":
+                handleGameState(message);
+                break;
+
             case "YOUR_TURN":
                 updateTurnLabel(nickname);
                 updateStatus("Your turn! Click on a card.");
@@ -397,6 +401,74 @@ public class GameController implements MessageListener {
                     alert.showAndWait();
                 });
                 break;
+        }
+    }
+
+    private void handleGameState(String message) {
+        // Format: GAME_STATE <board_size> <current_player_nick> <player1> <score1> <player2> <score2> ... <card_states>
+        String[] parts = message.split(" ");
+        if (parts.length < 4) return;
+
+        try {
+            int size = Integer.parseInt(parts[1]);
+            String currentPlayerNick = parts[2];
+
+            // Parse players and scores
+            players.clear();
+            playerScores.clear();
+
+            int index = 3;
+            while (index < parts.length - (size * size)) {
+                if (index + 1 >= parts.length) break;
+
+                String playerName = parts[index++];
+                int score = Integer.parseInt(parts[index++]);
+
+                players.add(playerName);
+                playerScores.put(playerName, score);
+            }
+
+            // Initialize board if not already done
+            if (boardSize != size) {
+                initializeBoard(size);
+            }
+
+            // Restore card states
+            int cardIndex = index;
+            for (int i = 0; i < boardSize * boardSize && cardIndex < parts.length; i++, cardIndex++) {
+                int cardValue = Integer.parseInt(parts[cardIndex]);
+
+                if (cardValue > 0) {
+                    // Card is matched
+                    cardMatched[i] = true;
+                    cardValues[i] = cardValue;
+                    Platform.runLater(() -> {
+                        int finalI = i;
+                        int finalValue = cardValue;
+                        cardButtons[finalI].setText(String.valueOf(finalValue));
+                        cardButtons[finalI].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
+                                                     "-fx-background-color: #4CAF50; -fx-text-fill: white;");
+                        cardButtons[finalI].setDisable(true);
+                    });
+                }
+            }
+
+            updatePlayers();
+            updateTurnLabel(currentPlayerNick);
+
+            gameStarted = true;
+            updateStatus("Game state restored after reconnection");
+
+            Platform.runLater(() -> {
+                readyButton.setVisible(false);
+                startGameButton.setVisible(false);
+            });
+
+            System.out.println("Game state restored: " + players.size() + " players, current player: " + currentPlayerNick);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            updateStatus("Error restoring game state: " + e.getMessage());
         }
     }
 

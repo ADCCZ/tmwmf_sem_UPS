@@ -341,21 +341,26 @@ int game_format_state_message(game_t *game, char *buffer, int buffer_size) {
         return -1;
     }
 
-    // Format: GAME_STATE <board_size> <current_player_nick> <score1> <score2> ... <card_states>
+    // Format: GAME_STATE <board_size> <current_player_nick> <player1> <score1> <player2> <score2> ... <card_states>
     int offset = snprintf(buffer, buffer_size, "GAME_STATE %d %s",
                           game->board_size,
                           game->players[game->current_player_index]->nickname);
 
-    // Add scores
+    // Add player names and scores
     for (int i = 0; i < game->player_count; i++) {
-        offset += snprintf(buffer + offset, buffer_size - offset, " %d",
+        offset += snprintf(buffer + offset, buffer_size - offset, " %s %d",
+                           game->players[i]->nickname,
                            game->player_scores[i]);
     }
 
-    // Add card states (0=hidden, 1=matched)
+    // Add card states (0=hidden, value=matched)
     for (int i = 0; i < game->total_cards; i++) {
-        offset += snprintf(buffer + offset, buffer_size - offset, " %d",
-                           (game->cards[i].state == CARD_MATCHED) ? 1 : 0);
+        if (game->cards[i].state == CARD_MATCHED) {
+            offset += snprintf(buffer + offset, buffer_size - offset, " %d",
+                              game->cards[i].value);
+        } else {
+            offset += snprintf(buffer + offset, buffer_size - offset, " 0");
+        }
     }
 
     return 0;

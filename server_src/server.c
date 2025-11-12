@@ -1,7 +1,9 @@
 #include "server.h"
 #include "client_handler.h"
+#include "client_list.h"
 #include "room.h"
 #include "logger.h"
+#include "protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +15,12 @@
 #include <errno.h>
 
 static server_config_t server_config;
+static pthread_t ping_thread;
+static pthread_t timeout_thread;
+
+// Forward declarations
+static void* ping_thread_func(void *arg);
+static void* timeout_checker_thread_func(void *arg);
 
 server_config_t* server_get_config(void) {
     return &server_config;
@@ -75,6 +83,38 @@ int server_init(const char *ip, int port, int max_rooms, int max_clients) {
         return -1;
     }
 
+    // Initialize client list
+    if (client_list_init(max_clients) != 0) {
+        logger_log(LOG_ERROR, "Failed to initialize client list");
+        room_system_shutdown();
+        close(server_config.listen_fd);
+        return -1;
+    }
+
+    // Start PING thread
+    int result = pthread_create(&ping_thread, NULL, ping_thread_func, NULL);
+    if (result != 0) {
+        logger_log(LOG_ERROR, "Failed to create PING thread: %s", strerror(result));
+        client_list_shutdown();
+        room_system_shutdown();
+        close(server_config.listen_fd);
+        return -1;
+    }
+    pthread_detach(ping_thread);
+    logger_log(LOG_INFO, "PING thread started");
+
+    // Start timeout checker thread
+    result = pthread_create(&timeout_thread, NULL, timeout_checker_thread_func, NULL);
+    if (result != 0) {
+        logger_log(LOG_ERROR, "Failed to create timeout checker thread: %s", strerror(result));
+        client_list_shutdown();
+        room_system_shutdown();
+        close(server_config.listen_fd);
+        return -1;
+    }
+    pthread_detach(timeout_thread);
+    logger_log(LOG_INFO, "Timeout checker thread started");
+
     logger_log(LOG_INFO, "Server initialized: %s:%d (max_rooms=%d, max_clients=%d)",
                ip, port, max_rooms, max_clients);
 
@@ -118,13 +158,23 @@ void server_run(void) {
         client->last_activity = time(NULL);
         client->invalid_message_count = 0;
         client->client_id = server_config.next_client_id++;
+        client->room = NULL;
         memset(client->nickname, 0, sizeof(client->nickname));
+
+        // Add to client list
+        if (client_list_add(client) != 0) {
+            logger_log(LOG_ERROR, "Failed to add client %d to list", client->client_id);
+            close(client_fd);
+            free(client);
+            continue;
+        }
 
         // Create thread for client
         pthread_t thread_id;
         int result = pthread_create(&thread_id, NULL, client_handler_thread, client);
         if (result != 0) {
             logger_log(LOG_ERROR, "Failed to create thread for client %d: %s", client->client_id, strerror(result));
+            client_list_remove(client);
             close(client_fd);
             free(client);
             continue;
@@ -144,6 +194,9 @@ void server_shutdown(void) {
 
     server_config.running = 0;
 
+    // Shutdown client list
+    client_list_shutdown();
+
     // Shutdown room system
     room_system_shutdown();
 
@@ -153,4 +206,78 @@ void server_shutdown(void) {
     }
 
     logger_log(LOG_INFO, "Server shutdown complete");
+}
+
+/**
+ * PING thread - sends PING to all clients every PING_INTERVAL seconds
+ */
+static void* ping_thread_func(void *arg) {
+    (void)arg;
+
+    logger_log(LOG_INFO, "PING thread running");
+
+    while (server_config.running) {
+        sleep(PING_INTERVAL);
+
+        if (!server_config.running) break;
+
+        // Get all clients
+        client_t *clients[server_config.max_clients];
+        int count = client_list_get_all(clients, server_config.max_clients);
+
+        // Send PING to each authenticated client
+        for (int i = 0; i < count; i++) {
+            if (clients[i]->state >= STATE_AUTHENTICATED) {
+                int result = client_send_message(clients[i], CMD_PING);
+                if (result > 0) {
+                    logger_log(LOG_INFO, "PING sent to client %d (%s)",
+                              clients[i]->client_id, clients[i]->nickname);
+                }
+            }
+        }
+    }
+
+    logger_log(LOG_INFO, "PING thread terminated");
+    return NULL;
+}
+
+/**
+ * Timeout checker thread - checks for clients that haven't responded to PING
+ */
+static void* timeout_checker_thread_func(void *arg) {
+    (void)arg;
+
+    logger_log(LOG_INFO, "Timeout checker thread running");
+
+    while (server_config.running) {
+        sleep(5); // Check every 5 seconds
+
+        if (!server_config.running) break;
+
+        time_t now = time(NULL);
+        client_t *clients[server_config.max_clients];
+        int count = client_list_get_all(clients, server_config.max_clients);
+
+        for (int i = 0; i < count; i++) {
+            client_t *client = clients[i];
+            time_t inactive_time = now - client->last_activity;
+
+            // Only check authenticated clients
+            if (client->state >= STATE_AUTHENTICATED) {
+                // Timeout after PING_INTERVAL + PONG_TIMEOUT
+                int timeout_threshold = PING_INTERVAL + PONG_TIMEOUT;
+
+                if (inactive_time > timeout_threshold) {
+                    logger_log(LOG_WARNING, "Client %d (%s) timed out (inactive for %ld seconds)",
+                              client->client_id, client->nickname, inactive_time);
+
+                    // Close socket to trigger disconnect in client_handler_thread
+                    close(client->socket_fd);
+                }
+            }
+        }
+    }
+
+    logger_log(LOG_INFO, "Timeout checker thread terminated");
+    return NULL;
 }

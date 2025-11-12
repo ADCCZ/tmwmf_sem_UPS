@@ -2,7 +2,7 @@
 
 **Účel:** Krok-po-kroku návod, jak implementovat projekt Pexeso bez AI
 **Pro:** Studenty KIV/UPS, vývojáře učící se síťové programování
-**Poslední aktualizace:** 2025-11-12 (Packety 1-7)
+**Poslední aktualizace:** 2025-11-12 (Packety 1-8)
 
 ---
 
@@ -2815,6 +2815,666 @@ mvn javafx:run
 7. Hrajte hru!
 
 **Výstup:** Kompletní GUI klient s lobby a hrou!
+
+---
+
+## PACKET 8: PING/PONG KEEPALIVE A RECONNECT
+
+### Cíl:
+Implementovat connection keepalive, timeout detection, automatický reconnect a obnovení stavu hry
+
+### Co implementujeme:
+- PING/PONG keepalive každých 15s
+- Timeout detection (20s threshold)
+- Krátkodobý disconnect (< 60s): automatický reconnect
+- Dlouhodobý disconnect (> 60s): odebrání hráče
+- GAME_STATE pro obnovení hry po reconnectu
+
+### Krok za krokem (Server):
+
+#### 1. Vytvoř client_list.h
+
+```c
+#ifndef CLIENT_LIST_H
+#define CLIENT_LIST_H
+
+#include "client_handler.h"
+#include <pthread.h>
+
+int client_list_init(int max_clients);
+void client_list_shutdown(void);
+int client_list_add(client_t *client);
+void client_list_remove(client_t *client);
+int client_list_get_all(client_t **clients, int max_count);
+client_t* client_list_find_by_id(int client_id);
+
+#endif
+```
+
+#### 2. Vytvoř client_list.c
+
+```c
+#include "client_list.h"
+#include "logger.h"
+#include <stdlib.h>
+
+static client_t **client_array = NULL;
+static int max_clients = 0;
+static int client_count = 0;
+static pthread_mutex_t list_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+int client_list_init(int max) {
+    pthread_mutex_lock(&list_mutex);
+    max_clients = max;
+    client_array = (client_t **)calloc(max_clients, sizeof(client_t *));
+    if (client_array == NULL) {
+        pthread_mutex_unlock(&list_mutex);
+        return -1;
+    }
+    client_count = 0;
+    pthread_mutex_unlock(&list_mutex);
+    return 0;
+}
+
+void client_list_shutdown(void) {
+    pthread_mutex_lock(&list_mutex);
+    if (client_array != NULL) {
+        free(client_array);
+        client_array = NULL;
+    }
+    max_clients = 0;
+    client_count = 0;
+    pthread_mutex_unlock(&list_mutex);
+}
+
+int client_list_add(client_t *client) {
+    if (client == NULL) return -1;
+
+    pthread_mutex_lock(&list_mutex);
+    for (int i = 0; i < max_clients; i++) {
+        if (client_array[i] == NULL) {
+            client_array[i] = client;
+            client_count++;
+            pthread_mutex_unlock(&list_mutex);
+            return 0;
+        }
+    }
+    pthread_mutex_unlock(&list_mutex);
+    return -1;
+}
+
+void client_list_remove(client_t *client) {
+    if (client == NULL) return;
+
+    pthread_mutex_lock(&list_mutex);
+    for (int i = 0; i < max_clients; i++) {
+        if (client_array[i] == client) {
+            client_array[i] = NULL;
+            client_count--;
+            pthread_mutex_unlock(&list_mutex);
+            return;
+        }
+    }
+    pthread_mutex_unlock(&list_mutex);
+}
+
+int client_list_get_all(client_t **clients, int max_count) {
+    if (clients == NULL) return 0;
+
+    pthread_mutex_lock(&list_mutex);
+    int count = 0;
+    for (int i = 0; i < max_clients && count < max_count; i++) {
+        if (client_array[i] != NULL) {
+            clients[count++] = client_array[i];
+        }
+    }
+    pthread_mutex_unlock(&list_mutex);
+    return count;
+}
+
+client_t* client_list_find_by_id(int client_id) {
+    pthread_mutex_lock(&list_mutex);
+    for (int i = 0; i < max_clients; i++) {
+        if (client_array[i] != NULL && client_array[i]->client_id == client_id) {
+            client_t *client = client_array[i];
+            pthread_mutex_unlock(&list_mutex);
+            return client;
+        }
+    }
+    pthread_mutex_unlock(&list_mutex);
+    return NULL;
+}
+```
+
+**Klíčové body:**
+- Thread-safe pomocí mutexu
+- Tracking všech připojených klientů
+- Find by ID pro reconnect
+
+#### 3. Aktualizuj protocol.h
+
+Přidej timeout konstanty:
+
+```c
+// Timeout constants (in seconds)
+#define PING_INTERVAL 15           // Send PING every 15 seconds
+#define PONG_TIMEOUT 5             // Expect PONG within 5 seconds
+#define SHORT_DISCONNECT_TIMEOUT 60    // < 60s = short disconnect
+#define LONG_DISCONNECT_TIMEOUT 60     // >= 60s = long disconnect
+```
+
+#### 4. Aktualizuj server.c
+
+Přidej PING thread a timeout checker:
+
+```c
+#include "client_list.h"
+
+static pthread_t ping_thread;
+static pthread_t timeout_thread;
+
+// V server_init():
+client_list_init(max_clients);
+pthread_create(&ping_thread, NULL, ping_thread_func, NULL);
+pthread_create(&timeout_thread, NULL, timeout_checker_thread_func, NULL);
+
+// Na konec souboru:
+static void* ping_thread_func(void *arg) {
+    while (server_config.running) {
+        sleep(PING_INTERVAL);
+        if (!server_config.running) break;
+
+        client_t *clients[server_config.max_clients];
+        int count = client_list_get_all(clients, server_config.max_clients);
+
+        for (int i = 0; i < count; i++) {
+            if (clients[i]->state >= STATE_AUTHENTICATED) {
+                client_send_message(clients[i], CMD_PING);
+            }
+        }
+    }
+    return NULL;
+}
+
+static void* timeout_checker_thread_func(void *arg) {
+    while (server_config.running) {
+        sleep(5);
+        if (!server_config.running) break;
+
+        time_t now = time(NULL);
+        client_t *clients[server_config.max_clients];
+        int count = client_list_get_all(clients, server_config.max_clients);
+
+        for (int i = 0; i < count; i++) {
+            client_t *client = clients[i];
+            time_t inactive_time = now - client->last_activity;
+
+            if (client->state >= STATE_AUTHENTICATED) {
+                int timeout_threshold = PING_INTERVAL + PONG_TIMEOUT;
+
+                if (inactive_time > timeout_threshold) {
+                    logger_log(LOG_WARNING, "Client %d timed out", client->client_id);
+                    close(client->socket_fd);  // Trigger disconnect
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+// V server_run() po vytvoření klienta:
+client_list_add(client);
+
+// V server_shutdown():
+client_list_shutdown();
+```
+
+**Klíčové body:**
+- PING thread běží každých 15s
+- Timeout checker každých 5s
+- Timeout = PING_INTERVAL + PONG_TIMEOUT = 20s
+
+#### 5. Aktualizuj client_handler.c
+
+Přidej PONG a RECONNECT handlery:
+
+```c
+#include "client_list.h"
+
+// Přidej do handle_message():
+} else if (strcmp(command, CMD_RECONNECT) == 0) {
+    handle_reconnect(client, params);
+
+// Implementuj handle_pong:
+static void handle_pong(client_t *client) {
+    client->last_activity = time(NULL);
+    logger_log(LOG_INFO, "Client %d: PONG received", client->client_id);
+}
+
+// Implementuj handle_reconnect:
+static void handle_reconnect(client_t *new_client, const char *params) {
+    if (params == NULL) {
+        client_send_message(new_client, "ERROR INVALID_PARAMS Missing client ID");
+        return;
+    }
+
+    int old_client_id = atoi(params);
+    if (old_client_id <= 0) {
+        client_send_message(new_client, "ERROR INVALID_PARAMS Invalid client ID");
+        return;
+    }
+
+    // Find old client
+    client_t *old_client = client_list_find_by_id(old_client_id);
+    if (old_client == NULL) {
+        client_send_message(new_client, "ERROR Client not found or session expired");
+        return;
+    }
+
+    // Check timeout
+    time_t disconnect_duration = time(NULL) - old_client->last_activity;
+    if (disconnect_duration > SHORT_DISCONNECT_TIMEOUT) {
+        client_send_message(new_client, "ERROR Session expired (timeout > 60s)");
+        return;
+    }
+
+    // Transfer state
+    strcpy(new_client->nickname, old_client->nickname);
+    new_client->state = old_client->state;
+    new_client->room = old_client->room;
+    new_client->client_id = old_client->client_id;  // Keep old ID
+    new_client->last_activity = time(NULL);
+
+    // Replace in client list
+    client_list_remove(old_client);
+    client_list_add(new_client);
+    close(old_client->socket_fd);
+
+    // Update room player pointer
+    if (new_client->room != NULL) {
+        room_t *room = new_client->room;
+        for (int i = 0; i < room->player_count; i++) {
+            if (room->players[i] == old_client) {
+                room->players[i] = new_client;
+                break;
+            }
+        }
+
+        // Update game player pointer
+        if (room->game != NULL) {
+            game_t *game = (game_t *)room->game;
+            for (int i = 0; i < game->player_count; i++) {
+                if (game->players[i] == old_client) {
+                    game->players[i] = new_client;
+                    break;
+                }
+            }
+        }
+    }
+
+    free(old_client);
+
+    // Send WELCOME
+    char welcome_msg[MAX_MESSAGE_LENGTH];
+    snprintf(welcome_msg, sizeof(welcome_msg), "WELCOME %d Reconnected successfully",
+             new_client->client_id);
+    client_send_message(new_client, welcome_msg);
+
+    // Send GAME_STATE if in game
+    if (new_client->room != NULL && new_client->room->game != NULL) {
+        game_t *game = (game_t *)new_client->room->game;
+        if (game->state == GAME_STATE_PLAYING) {
+            char state_msg[MAX_MESSAGE_LENGTH];
+            if (game_format_state_message(game, state_msg, sizeof(state_msg)) == 0) {
+                client_send_message(new_client, state_msg);
+            }
+        }
+
+        // Notify others
+        char broadcast[MAX_MESSAGE_LENGTH];
+        snprintf(broadcast, sizeof(broadcast), "PLAYER_RECONNECTED %s", new_client->nickname);
+        room_broadcast(new_client->room, broadcast);
+    }
+}
+
+// V cleanup části client_handler_thread:
+client_list_remove(client);
+
+// Před close a free:
+if (client->room != NULL) {
+    char broadcast[MAX_MESSAGE_LENGTH];
+    snprintf(broadcast, sizeof(broadcast), "PLAYER_DISCONNECTED %s LONG", client->nickname);
+    room_broadcast(room, broadcast);
+}
+```
+
+**Klíčové body:**
+- RECONNECT najde starého klienta podle ID
+- Ověří timeout < 60s
+- Přenese stav (nickname, room, game)
+- Pošle GAME_STATE pro obnovu hry
+
+#### 6. Aktualizuj game.c
+
+Vylepši game_format_state_message():
+
+```c
+int game_format_state_message(game_t *game, char *buffer, int buffer_size) {
+    if (game == NULL || buffer == NULL || buffer_size < 1) {
+        return -1;
+    }
+
+    // Format: GAME_STATE <board_size> <current_player_nick> <player1> <score1> ... <card_states>
+    int offset = snprintf(buffer, buffer_size, "GAME_STATE %d %s",
+                          game->board_size,
+                          game->players[game->current_player_index]->nickname);
+
+    // Add player names and scores
+    for (int i = 0; i < game->player_count; i++) {
+        offset += snprintf(buffer + offset, buffer_size - offset, " %s %d",
+                           game->players[i]->nickname,
+                           game->player_scores[i]);
+    }
+
+    // Add card states (0=hidden, value=matched)
+    for (int i = 0; i < game->total_cards; i++) {
+        if (game->cards[i].state == CARD_MATCHED) {
+            offset += snprintf(buffer + offset, buffer_size - offset, " %d",
+                              game->cards[i].value);
+        } else {
+            offset += snprintf(buffer + offset, buffer_size - offset, " 0");
+        }
+    }
+
+    return 0;
+}
+```
+
+**Klíčové body:**
+- Obsahuje player jména a skóre
+- Card states: 0 = hidden, value = matched
+
+#### 7. Aktualizuj Makefile
+
+```makefile
+SOURCES = main.c server.c client_handler.c client_list.c logger.c room.c game.c
+
+# Dependencies:
+client_list.o: client_list.c client_list.h client_handler.h logger.h
+```
+
+### Krok za krokem (Klient):
+
+#### 1. Aktualizuj ProtocolConstants.java
+
+```java
+public static final int RECONNECT_INTERVAL_MS = 2000;  // 2s between attempts
+public static final int MAX_RECONNECT_ATTEMPTS = 5;    // Max 5 attempts
+```
+
+#### 2. Aktualizuj ClientConnection.java
+
+Přidej fields:
+
+```java
+private int clientId = -1;
+private boolean autoReconnect = false;
+private volatile boolean reconnecting = false;
+
+public void setClientId(int clientId) {
+    this.clientId = clientId;
+    this.autoReconnect = (clientId > 0);
+}
+
+public int getClientId() {
+    return clientId;
+}
+```
+
+Implementuj reconnect():
+
+```java
+public boolean reconnect() {
+    if (clientId <= 0) return false;
+    if (reconnecting) return false;
+
+    reconnecting = true;
+
+    try {
+        cleanup();
+        Thread.sleep(ProtocolConstants.RECONNECT_INTERVAL_MS);
+
+        socket = new Socket();
+        socket.connect(new InetSocketAddress(serverHost, serverPort),
+                      ProtocolConstants.CONNECTION_TIMEOUT_MS);
+        socket.setSoTimeout(ProtocolConstants.READ_TIMEOUT_MS);
+
+        out = new PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8);
+        in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+
+        out.println("RECONNECT " + clientId);
+        String response = in.readLine();
+
+        if (response != null && response.startsWith("WELCOME")) {
+            running = true;
+            readerThread = new Thread(this::readerLoop, "ClientConnection-Reader");
+            readerThread.setDaemon(true);
+            readerThread.start();
+
+            if (listener != null) {
+                listener.onConnected();
+            }
+
+            reconnecting = false;
+            return true;
+        } else {
+            cleanup();
+            reconnecting = false;
+            return false;
+        }
+
+    } catch (Exception e) {
+        cleanup();
+        reconnecting = false;
+        return false;
+    }
+}
+```
+
+Aktualizuj readerLoop():
+
+```java
+} finally {
+    running = false;
+    cleanup();
+
+    // Auto-reconnect
+    if (autoReconnect && clientId > 0 && !reconnecting) {
+        for (int attempt = 1; attempt <= ProtocolConstants.MAX_RECONNECT_ATTEMPTS; attempt++) {
+            if (reconnect()) {
+                return;  // Success!
+            }
+
+            if (attempt < ProtocolConstants.MAX_RECONNECT_ATTEMPTS) {
+                Thread.sleep(ProtocolConstants.RECONNECT_INTERVAL_MS);
+            }
+        }
+
+        if (listener != null) {
+            listener.onDisconnected("Failed to reconnect");
+        }
+    }
+}
+```
+
+**Klíčové body:**
+- Auto-reconnect po disconnect
+- Max 5 pokusů, 2s interval
+- Použití původního client_id
+
+#### 3. Aktualizuj LoginController.java
+
+Parse client ID z WELCOME:
+
+```java
+@Override
+public void onMessageReceived(String message) {
+    log("Received: " + message);
+
+    if (message.startsWith(ProtocolConstants.CMD_WELCOME)) {
+        // Format: WELCOME <client_id> [message]
+        String[] parts = message.split(" ");
+        if (parts.length >= 2) {
+            try {
+                int clientId = Integer.parseInt(parts[1]);
+                connection.setClientId(clientId);
+                log("Client ID: " + clientId);
+            } catch (NumberFormatException e) {
+                log("Warning: Could not parse client ID");
+            }
+        }
+
+        log("Successfully authenticated!");
+        switchToLobby();
+    } else if (message.startsWith(ProtocolConstants.CMD_PING)) {
+        connection.sendMessage(ProtocolConstants.CMD_PONG);
+        log("Sent: PONG");
+    }
+}
+```
+
+**Klíčové body:**
+- Parse client_id z WELCOME
+- Nastavení client_id aktivuje auto-reconnect
+
+#### 4. Aktualizuj GameController.java
+
+Přidej do onMessageReceived():
+
+```java
+case "GAME_STATE":
+    handleGameState(message);
+    break;
+```
+
+Implementuj handleGameState():
+
+```java
+private void handleGameState(String message) {
+    // Format: GAME_STATE <board_size> <current_player> <player1> <score1> ... <card_states>
+    String[] parts = message.split(" ");
+    if (parts.length < 4) return;
+
+    try {
+        int size = Integer.parseInt(parts[1]);
+        String currentPlayerNick = parts[2];
+
+        players.clear();
+        playerScores.clear();
+
+        int index = 3;
+        while (index < parts.length - (size * size)) {
+            if (index + 1 >= parts.length) break;
+
+            String playerName = parts[index++];
+            int score = Integer.parseInt(parts[index++]);
+
+            players.add(playerName);
+            playerScores.put(playerName, score);
+        }
+
+        // Initialize board if needed
+        if (boardSize != size) {
+            initializeBoard(size);
+        }
+
+        // Restore card states
+        for (int i = 0; i < boardSize * boardSize && index < parts.length; i++) {
+            int cardValue = Integer.parseInt(parts[index++]);
+
+            if (cardValue > 0) {
+                // Card is matched
+                final int finalI = i;
+                final int finalValue = cardValue;
+
+                cardMatched[i] = true;
+                cardValues[i] = cardValue;
+
+                Platform.runLater(() -> {
+                    cardButtons[finalI].setText(String.valueOf(finalValue));
+                    cardButtons[finalI].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
+                                                 "-fx-background-color: #4CAF50; -fx-text-fill: white;");
+                    cardButtons[finalI].setDisable(true);
+                });
+            }
+        }
+
+        updatePlayers();
+        updateTurnLabel(currentPlayerNick);
+
+        gameStarted = true;
+        updateStatus("Game state restored after reconnection");
+
+        Platform.runLater(() -> {
+            readyButton.setVisible(false);
+            startGameButton.setVisible(false);
+        });
+
+    } catch (Exception e) {
+        e.printStackTrace();
+        updateStatus("Error restoring game state: " + e.getMessage());
+    }
+}
+```
+
+**Klíčové body:**
+- Parse GAME_STATE zprávy
+- Obnov hráče, skóre, matched karty
+- Update UI thread-safe
+
+#### 5. Zkompiluj server a klienta
+
+Server:
+```bash
+cd server_src
+make clean
+make
+```
+
+Klient:
+```bash
+cd client_src
+mvn clean compile
+```
+
+#### 6. Testuj
+
+**Test 1: PING/PONG**
+```bash
+# Spusť server a klienta
+# Sleduj logy - každých 15s by měl být PING/PONG
+tail -f server.log
+```
+
+**Test 2: Short disconnect**
+```bash
+# Během hry:
+# Windows: Vypni síť na 10s, zapni zpět
+# Linux: iptables -A OUTPUT -p tcp --dport 10000 -j DROP
+# Počkej < 60s
+# Odblokuj: iptables -D OUTPUT -p tcp --dport 10000 -j DROP
+
+# Klient by měl auto-reconnect a hra pokračuje
+```
+
+**Test 3: Long disconnect**
+```bash
+# Během hry vypni síť > 60s
+# Klient neuspěje v reconnectu
+# Server odstraní hráče
+```
+
+**Výstup:** Robustní spojení s auto-reconnect!
 
 ---
 

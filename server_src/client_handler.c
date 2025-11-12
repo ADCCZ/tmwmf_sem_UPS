@@ -1,4 +1,5 @@
 #include "client_handler.h"
+#include "client_list.h"
 #include "room.h"
 #include "game.h"
 #include "logger.h"
@@ -18,6 +19,7 @@ static void handle_ready(client_t *client);
 static void handle_start_game(client_t *client);
 static void handle_flip(client_t *client, const char *params);
 static void handle_pong(client_t *client);
+static void handle_reconnect(client_t *client, const char *params);
 
 int client_send_message(client_t *client, const char *message) {
     if (client == NULL || message == NULL) {
@@ -65,6 +67,8 @@ static void handle_message(client_t *client, const char *message) {
         // Dispatch based on command
         if (strcmp(command, CMD_HELLO) == 0) {
             handle_hello(client, params);
+        } else if (strcmp(command, CMD_RECONNECT) == 0) {
+            handle_reconnect(client, params);
         } else if (strcmp(command, CMD_CREATE_ROOM) == 0) {
             handle_create_room(client, params);
         } else if (strcmp(command, CMD_JOIN_ROOM) == 0) {
@@ -473,6 +477,109 @@ static void handle_pong(client_t *client) {
     logger_log(LOG_INFO, "Client %d: PONG received", client->client_id);
 }
 
+static void handle_reconnect(client_t *new_client, const char *params) {
+    if (params == NULL) {
+        client_send_message(new_client, "ERROR INVALID_PARAMS Missing client ID");
+        return;
+    }
+
+    int old_client_id = atoi(params);
+    if (old_client_id <= 0) {
+        client_send_message(new_client, "ERROR INVALID_PARAMS Invalid client ID");
+        return;
+    }
+
+    // Find old client by ID
+    client_t *old_client = client_list_find_by_id(old_client_id);
+    if (old_client == NULL) {
+        client_send_message(new_client, "ERROR Client not found or session expired");
+        logger_log(LOG_WARNING, "Client %d: RECONNECT failed - client %d not found",
+                  new_client->client_id, old_client_id);
+        return;
+    }
+
+    // Check disconnect time
+    time_t disconnect_duration = time(NULL) - old_client->last_activity;
+    if (disconnect_duration > SHORT_DISCONNECT_TIMEOUT) {
+        client_send_message(new_client, "ERROR Session expired (timeout > 60s)");
+        logger_log(LOG_WARNING, "Client %d: RECONNECT failed - timeout too long (%ld seconds)",
+                  new_client->client_id, disconnect_duration);
+        return;
+    }
+
+    logger_log(LOG_INFO, "Client %d: Reconnecting as client %d (%s), disconnect duration: %ld seconds",
+              new_client->client_id, old_client_id, old_client->nickname, disconnect_duration);
+
+    // Transfer state from old to new client
+    strcpy(new_client->nickname, old_client->nickname);
+    new_client->state = old_client->state;
+    new_client->room = old_client->room;
+    new_client->client_id = old_client->client_id;  // Keep old ID
+    new_client->last_activity = time(NULL);
+
+    // Replace old client in client list
+    client_list_remove(old_client);
+    client_list_add(new_client);
+
+    // Close old socket
+    close(old_client->socket_fd);
+
+    // Update room player pointer if in room
+    if (new_client->room != NULL) {
+        room_t *room = new_client->room;
+        for (int i = 0; i < room->player_count; i++) {
+            if (room->players[i] == old_client) {
+                room->players[i] = new_client;
+                logger_log(LOG_INFO, "Client %d: Updated room %d player pointer",
+                          new_client->client_id, room->room_id);
+                break;
+            }
+        }
+
+        // Update game player pointer if in game
+        if (room->game != NULL) {
+            game_t *game = (game_t *)room->game;
+            for (int i = 0; i < game->player_count; i++) {
+                if (game->players[i] == old_client) {
+                    game->players[i] = new_client;
+                    logger_log(LOG_INFO, "Client %d: Updated game player pointer",
+                              new_client->client_id);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Free old client (but don't close socket or broadcast disconnect)
+    free(old_client);
+
+    // Send WELCOME with same client ID
+    char welcome_msg[MAX_MESSAGE_LENGTH];
+    snprintf(welcome_msg, sizeof(welcome_msg), "WELCOME %d Reconnected successfully",
+             new_client->client_id);
+    client_send_message(new_client, welcome_msg);
+
+    // If in game, send GAME_STATE to restore game
+    if (new_client->room != NULL && new_client->room->game != NULL) {
+        game_t *game = (game_t *)new_client->room->game;
+        if (game->state == GAME_STATE_PLAYING) {
+            char state_msg[MAX_MESSAGE_LENGTH];
+            if (game_format_state_message(game, state_msg, sizeof(state_msg)) == 0) {
+                client_send_message(new_client, state_msg);
+                logger_log(LOG_INFO, "Client %d: Sent GAME_STATE for reconnection",
+                          new_client->client_id);
+            }
+        }
+
+        // Notify other players
+        char broadcast[MAX_MESSAGE_LENGTH];
+        snprintf(broadcast, sizeof(broadcast), "PLAYER_RECONNECTED %s", new_client->nickname);
+        room_broadcast(new_client->room, broadcast);
+    }
+
+    logger_log(LOG_INFO, "Client %d: Reconnection successful", new_client->client_id);
+}
+
 void* client_handler_thread(void *arg) {
     client_t *client = (client_t *)arg;
     char buffer[MAX_MESSAGE_LENGTH];
@@ -556,6 +663,10 @@ void* client_handler_thread(void *arg) {
     }
 
     logger_log(LOG_INFO, "Client %d: Closing connection", client->client_id);
+
+    // Remove from client list
+    client_list_remove(client);
+
     close(client->socket_fd);
     free(client);
 

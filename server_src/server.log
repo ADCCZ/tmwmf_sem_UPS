@@ -1,18 +1,81 @@
-[2025-11-11 22:37:37] [INFO] Logger initialized
-[2025-11-11 22:37:37] [INFO] === Pexeso Server Starting ===
-[2025-11-11 22:37:37] [INFO] Configuration: IP=127.0.0.1, Port=10000, MaxRooms=10, MaxClients=50
-[2025-11-11 22:37:37] [INFO] Server initialized: 127.0.0.1:10000 (max_rooms=10, max_clients=50)
-[2025-11-11 22:37:37] [INFO] Server started, waiting for connections...
-[2025-11-11 22:39:03] [INFO] Received signal 2, shutting down...
-[2025-11-11 22:39:03] [INFO] Server stopped accepting connections
-[2025-11-11 22:39:03] [INFO] Server shutting down...
-[2025-11-11 22:39:03] [INFO] Server shutdown complete
-[2025-11-11 22:39:27] [INFO] Logger initialized
-[2025-11-11 22:39:27] [INFO] === Pexeso Server Starting ===
-[2025-11-11 22:39:27] [INFO] Configuration: IP=127.0.0.1, Port=10000, MaxRooms=10, MaxClients=50
-[2025-11-11 22:39:27] [INFO] Server initialized: 127.0.0.1:10000 (max_rooms=10, max_clients=50)
-[2025-11-11 22:39:27] [INFO] Server started, waiting for connections...
-[2025-11-11 22:39:34] [INFO] Received signal 2, shutting down...
-[2025-11-11 22:39:34] [INFO] Server stopped accepting connections
-[2025-11-11 22:39:34] [INFO] Server shutting down...
-[2025-11-11 22:39:34] [INFO] Server shutdown complete
+[2025-11-12 12:01:53] [INFO] Logger initialized
+[2025-11-12 12:01:53] [INFO] === Pexeso Server Starting ===
+[2025-11-12 12:01:53] [INFO] Configuration: IP=127.0.0.1, Port=10000, MaxRooms=10, MaxClients=50
+[2025-11-12 12:01:53] [INFO] Room system initialized (max_rooms=10)
+[2025-11-12 12:01:53] [INFO] Server initialized: 127.0.0.1:10000 (max_rooms=10, max_clients=50)
+[2025-11-12 12:01:53] [INFO] Server started, waiting for connections...
+[2025-11-12 12:02:11] [INFO] New connection from 127.0.0.1:44570 (fd=5)
+[2025-11-12 12:02:11] [INFO] Client 1: Thread created successfully
+[2025-11-12 12:02:11] [INFO] Client 1: Handler thread started (fd=5)
+[2025-11-12 12:02:28] [INFO] Client 1: Received message: 'HELLO Alice'
+[2025-11-12 12:02:28] [INFO] Client 1 authenticated as 'Alice'
+[2025-11-12 12:02:41] [INFO] Client 1: Received message: 'LIST_ROOMS'
+[2025-11-12 12:02:41] [INFO] Client 1 (Alice) requested room list
+[2025-11-12 12:03:09] [INFO] Client 1: Received message: 'CREATE_ROOM TestRoom 4'
+[2025-11-12 12:03:09] [INFO] Room created: id=1, name='TestRoom', max_players=4, owner=Alice
+[2025-11-12 12:03:09] [INFO] Client 1 (Alice) created room 1
+[2025-11-12 12:03:29] [INFO] Client 1: Received message: 'LIST_ROOMS'
+[2025-11-12 12:03:29] [INFO] Client 1 (Alice) requested room list
+[2025-11-12 12:03:54] [INFO] New connection from 127.0.0.1:44608 (fd=6)
+[2025-11-12 12:03:54] [INFO] Client 2: Thread created successfully
+[2025-11-12 12:03:54] [INFO] Client 2: Handler thread started (fd=6)
+[2025-11-12 12:04:21] [INFO] Client 2: Received message: 'HELLO Bob'
+[2025-11-12 12:04:21] [INFO] Client 2 authenticated as 'Bob'
+[2025-11-12 12:04:30] [INFO] Client 2: Received message: 'LIST_ROOMS'
+[2025-11-12 12:04:30] [INFO] Client 2 (Bob) requested room list
+[2025-11-12 12:04:53] [INFO] Client 2: Received message: 'JOIN_ROOM 1'
+[2025-11-12 12:04:53] [INFO] Client 2 (Bob) joined room 1
+[2025-11-12 12:04:53] [INFO] Client 2 (Bob) joined room 1
+[2025-11-12 12:05:26] [INFO] Client 2: Received message: '  LEAVE_ROOM'
+[2025-11-12 12:05:26] [WARN] Client 2: Unknown command: 
+[2025-11-12 12:05:33] [INFO] Client 2: Received message: 'LEAVE_ROOM'
+[2025-11-12 12:05:33] [INFO] Client 2 (Bob) left room 1
+[2025-11-12 12:05:33] [INFO] Client 2 (Bob) left room 1
+[2025-11-12 12:05:59] [INFO] Client 2: Received message: 'JOIN_ROOM 123'
+[2025-11-12 12:06:10] [INFO] Client 2: Received message: 'LEAVE_ROOM'
+[2025-11-12 12:06:26] [INFO] Client 2: Received message: 'CREATE_ROOM BadRoom 10'
+[2025-11-12 12:08:36] [INFO] Client 2: Connection closed by client
+[2025-11-12 12:08:36] [INFO] Client 2: Closing connection
+[2025-11-12 12:08:38] [INFO] Client 1: Connection closed by client
+[2025-11-12 12:08:38] [INFO] Client 1: Removing from room 1
+[2025-11-12 12:08:38] [INFO] Client 1 (Alice) left room 1
+[2025-11-12 12:08:38] [INFO] Room 1 is empty, destroying
+[2025-11-12 12:08:38] [INFO] Client 1: Closing connection
+[2025-11-12 12:09:23] [INFO] Received signal 2, shutting down...
+[2025-11-12 12:09:23] [INFO] Server stopped accepting connections
+[2025-11-12 12:09:23] [INFO] Server shutting down...
+[2025-11-12 12:09:23] [INFO] Room system shutdown
+[2025-11-12 12:09:23] [INFO] Server shutdown complete
+[2025-11-12 12:19:31] [INFO] Logger initialized
+[2025-11-12 12:19:31] [INFO] === Pexeso Server Starting ===
+[2025-11-12 12:19:31] [INFO] Configuration: IP=0.0.0.0, Port=10000, MaxRooms=10, MaxClients=50
+[2025-11-12 12:19:31] [INFO] Room system initialized (max_rooms=10)
+[2025-11-12 12:19:31] [INFO] Server initialized: 0.0.0.0:10000 (max_rooms=10, max_clients=50)
+[2025-11-12 12:19:31] [INFO] Server started, waiting for connections...
+[2025-11-12 12:25:24] [INFO] New connection from 172.30.176.1:52096 (fd=5)
+[2025-11-12 12:25:24] [INFO] Client 1: Thread created successfully
+[2025-11-12 12:25:24] [INFO] Client 1: Handler thread started (fd=5)
+[2025-11-12 12:25:42] [INFO] Client 1: Received message: 'HELLO TestLocal'
+[2025-11-12 12:25:42] [INFO] Client 1 authenticated as 'TestLocal'
+[2025-11-12 12:27:18] [INFO] New connection from 172.30.176.1:63819 (fd=6)
+[2025-11-12 12:27:18] [INFO] Client 2: Thread created successfully
+[2025-11-12 12:27:18] [INFO] Client 2: Handler thread started (fd=6)
+[2025-11-12 12:27:21] [INFO] Client 2: Received message: 'haha'
+[2025-11-12 12:27:21] [WARN] Client 2: Unknown command: haha
+[2025-11-12 12:27:34] [INFO] Client 2: Received message: 'HELLO DAVID'
+[2025-11-12 12:27:34] [INFO] Client 2 authenticated as 'DAVID'
+[2025-11-12 12:27:47] [INFO] Client 2: Received message: 'LIST_ROOMS'
+[2025-11-12 12:27:47] [INFO] Client 2 (DAVID) requested room list
+[2025-11-12 12:28:18] [INFO] Client 2: Received message: 'CREATE_ROOM lool 3'
+[2025-11-12 12:28:18] [INFO] Room created: id=1, name='lool', max_players=3, owner=DAVID
+[2025-11-12 12:28:18] [INFO] Client 2 (DAVID) created room 1
+[2025-11-12 12:28:31] [INFO] Client 2: Connection closed by client
+[2025-11-12 12:28:31] [INFO] Client 2: Removing from room 1
+[2025-11-12 12:28:31] [INFO] Client 2 (DAVID) left room 1
+[2025-11-12 12:28:31] [INFO] Room 1 is empty, destroying
+[2025-11-12 12:28:31] [INFO] Client 2: Closing connection
+[2025-11-12 12:43:22] [INFO] Received signal 2, shutting down...
+[2025-11-12 12:43:22] [INFO] Server stopped accepting connections
+[2025-11-12 12:43:22] [INFO] Server shutting down...
+[2025-11-12 12:43:22] [INFO] Room system shutdown
+[2025-11-12 12:43:22] [INFO] Server shutdown complete

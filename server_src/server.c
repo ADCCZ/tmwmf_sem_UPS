@@ -1,5 +1,6 @@
 #include "server.h"
 #include "client_handler.h"
+#include "room.h"
 #include "logger.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,6 +64,13 @@ int server_init(const char *ip, int port, int max_rooms, int max_clients) {
     // Listen for connections
     if (listen(server_config.listen_fd, 10) < 0) {
         logger_log(LOG_ERROR, "Failed to listen: %s", strerror(errno));
+        close(server_config.listen_fd);
+        return -1;
+    }
+
+    // Initialize room system
+    if (room_system_init(max_rooms) != 0) {
+        logger_log(LOG_ERROR, "Failed to initialize room system");
         close(server_config.listen_fd);
         return -1;
     }
@@ -135,6 +143,9 @@ void server_shutdown(void) {
     logger_log(LOG_INFO, "Server shutting down...");
 
     server_config.running = 0;
+
+    // Shutdown room system
+    room_system_shutdown();
 
     if (server_config.listen_fd >= 0) {
         close(server_config.listen_fd);

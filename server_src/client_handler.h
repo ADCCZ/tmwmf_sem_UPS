@@ -8,6 +8,9 @@
  * Client handler module - manages individual client connections
  */
 
+// Forward declaration to avoid circular dependency
+struct room_s;
+
 typedef struct {
     int socket_fd;
     char nickname[MAX_NICK_LENGTH];
@@ -15,6 +18,7 @@ typedef struct {
     time_t last_activity;
     int invalid_message_count;
     int client_id;
+    struct room_s *room;  // Current room (NULL if in lobby)
 } client_t;
 
 /**

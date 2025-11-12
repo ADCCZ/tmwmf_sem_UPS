@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(gcc:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(make:*)",
+      "Bash(java -version:*)",
+      "Bash(mvn:*)",
+      "Bash(sudo apt update:*)",
+      "Bash(chmod:*)",
+      "Bash(./quick_test.sh)"
     ],
     "deny": [],
     "ask": []

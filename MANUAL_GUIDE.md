@@ -1094,6 +1094,707 @@ CREATE_ROOM MyRoom 4
 
 ---
 
+## PACKET 6: HERNÍ LOGIKA PEXESA
+
+### Cíl:
+Implementovat kompletní herní logiku Memory (Pexeso) hry
+
+### Co implementujeme:
+- Vytváření hry s náhodným rozmístěním karet
+- Otáčení karet hráčem
+- Detekce shody/neshody párů
+- Střídání hráčů a počítání bodů
+- Detekce konce hry a vítězů
+
+### Krok za krokem:
+
+#### 1. Vytvoř `game.h`
+
+```c
+#ifndef GAME_H
+#define GAME_H
+
+#include "client_handler.h"
+
+#define MIN_BOARD_SIZE 4    // 4x4 = 16 cards (8 pairs)
+#define MAX_BOARD_SIZE 6    // 6x6 = 36 cards (18 pairs)
+
+typedef enum {
+    CARD_HIDDEN,     // Card is face down
+    CARD_REVEALED,   // Card is face up
+    CARD_MATCHED     // Card has been matched
+} card_state_t;
+
+typedef struct {
+    int value;           // Card value (1-18, pairs have same value)
+    card_state_t state;  // Current state
+} card_t;
+
+typedef enum {
+    GAME_STATE_WAITING,   // Waiting for players to be ready
+    GAME_STATE_PLAYING,   // Game in progress
+    GAME_STATE_FINISHED   // Game ended
+} game_state_t;
+
+typedef struct game_s {
+    int board_size;              // Board size (4, 5, or 6)
+    int total_cards;             // board_size * board_size
+    int total_pairs;             // total_cards / 2
+    card_t *cards;               // Array of cards
+
+    client_t *players[MAX_PLAYERS_PER_ROOM];
+    int player_count;
+    int player_scores[MAX_PLAYERS_PER_ROOM];
+    int player_ready[MAX_PLAYERS_PER_ROOM];
+
+    int current_player_index;    // Index of player whose turn it is
+    int first_card_index;        // First flipped card (-1 if none)
+    int second_card_index;       // Second flipped card (-1 if none)
+    int flips_this_turn;         // 0, 1, or 2
+
+    int matched_pairs;           // Number of pairs matched
+    game_state_t state;
+} game_t;
+
+// Function declarations
+game_t* game_create(int board_size, client_t **players, int player_count);
+void game_destroy(game_t *game);
+int game_player_ready(game_t *game, client_t *client);
+int game_all_players_ready(game_t *game);
+int game_start(game_t *game);
+int game_flip_card(game_t *game, client_t *client, int card_index);
+int game_check_match(game_t *game);
+client_t* game_get_current_player(game_t *game);
+int game_is_finished(game_t *game);
+int game_get_winners(game_t *game, client_t **winners);
+int game_format_start_message(game_t *game, char *buffer, int buffer_size);
+int game_format_state_message(game_t *game, char *buffer, int buffer_size);
+
+#endif // GAME_H
+```
+
+**Klíčové body:**
+- `card_t` - jednotlivá karta (hodnota + stav)
+- `game_t` - celá hra (karty, hráči, skóre, aktuální tah)
+- Fisher-Yates shuffle pro náhodné rozmístění
+
+#### 2. Implementuj `game.c` - Vytvoření hry
+
+```c
+#include "game.h"
+#include "logger.h"
+#include "protocol.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+// Fisher-Yates shuffle
+static void shuffle_array(int *array, int size) {
+    for (int i = size - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        int temp = array[i];
+        array[i] = array[j];
+        array[j] = temp;
+    }
+}
+
+game_t* game_create(int board_size, client_t **players, int player_count) {
+    if (board_size < MIN_BOARD_SIZE || board_size > MAX_BOARD_SIZE) {
+        logger_log(LOG_ERROR, "Invalid board size: %d", board_size);
+        return NULL;
+    }
+
+    game_t *game = (game_t *)calloc(1, sizeof(game_t));
+    if (game == NULL) {
+        logger_log(LOG_ERROR, "Failed to allocate memory for game");
+        return NULL;
+    }
+
+    // Initialize basic properties
+    game->board_size = board_size;
+    game->total_cards = board_size * board_size;
+    game->total_pairs = game->total_cards / 2;
+    game->player_count = player_count;
+    game->current_player_index = 0;
+    game->first_card_index = -1;
+    game->second_card_index = -1;
+    game->flips_this_turn = 0;
+    game->matched_pairs = 0;
+    game->state = GAME_STATE_WAITING;
+
+    // Copy players
+    for (int i = 0; i < player_count; i++) {
+        game->players[i] = players[i];
+        game->player_scores[i] = 0;
+        game->player_ready[i] = 0;
+    }
+
+    // Allocate cards
+    game->cards = (card_t *)calloc(game->total_cards, sizeof(card_t));
+    if (game->cards == NULL) {
+        logger_log(LOG_ERROR, "Failed to allocate memory for cards");
+        free(game);
+        return NULL;
+    }
+
+    // Create pairs: [1,1,2,2,3,3,...]
+    int *values = (int *)malloc(game->total_cards * sizeof(int));
+    for (int i = 0; i < game->total_pairs; i++) {
+        values[i * 2] = i + 1;
+        values[i * 2 + 1] = i + 1;
+    }
+
+    // Shuffle
+    srand(time(NULL));
+    shuffle_array(values, game->total_cards);
+
+    // Assign to cards
+    for (int i = 0; i < game->total_cards; i++) {
+        game->cards[i].value = values[i];
+        game->cards[i].state = CARD_HIDDEN;
+    }
+
+    free(values);
+    logger_log(LOG_INFO, "Game created: board=%d, cards=%d, pairs=%d",
+               board_size, game->total_cards, game->total_pairs);
+
+    return game;
+}
+
+void game_destroy(game_t *game) {
+    if (game == NULL) return;
+    if (game->cards != NULL) free(game->cards);
+    free(game);
+    logger_log(LOG_INFO, "Game destroyed");
+}
+```
+
+#### 3. Implementuj `game.c` - Logika otáčení karet
+
+```c
+int game_flip_card(game_t *game, client_t *client, int card_index) {
+    if (game == NULL || client == NULL) return -1;
+
+    // Check game is playing
+    if (game->state != GAME_STATE_PLAYING) {
+        logger_log(LOG_WARNING, "Cannot flip, game not playing");
+        return -1;
+    }
+
+    // Check it's player's turn
+    if (game->players[game->current_player_index] != client) {
+        logger_log(LOG_WARNING, "Not %s's turn", client->nickname);
+        return -1;
+    }
+
+    // Check not already flipped 2 cards
+    if (game->flips_this_turn >= 2) {
+        logger_log(LOG_WARNING, "%s already flipped 2 cards", client->nickname);
+        return -1;
+    }
+
+    // Validate card index
+    if (card_index < 0 || card_index >= game->total_cards) {
+        logger_log(LOG_WARNING, "Invalid card index: %d", card_index);
+        return -1;
+    }
+
+    // Check card is hidden
+    if (game->cards[card_index].state != CARD_HIDDEN) {
+        logger_log(LOG_WARNING, "Card %d already revealed/matched", card_index);
+        return -1;
+    }
+
+    // Reveal the card
+    game->cards[card_index].state = CARD_REVEALED;
+    game->flips_this_turn++;
+
+    logger_log(LOG_INFO, "%s flipped card %d (value=%d), flip %d/2",
+               client->nickname, card_index, game->cards[card_index].value,
+               game->flips_this_turn);
+
+    // Store indices
+    if (game->flips_this_turn == 1) {
+        game->first_card_index = card_index;
+    } else {
+        game->second_card_index = card_index;
+    }
+
+    return 0;
+}
+
+int game_check_match(game_t *game) {
+    if (game == NULL || game->flips_this_turn != 2) return 0;
+
+    int first_value = game->cards[game->first_card_index].value;
+    int second_value = game->cards[game->second_card_index].value;
+
+    if (first_value == second_value) {
+        // MATCH!
+        game->cards[game->first_card_index].state = CARD_MATCHED;
+        game->cards[game->second_card_index].state = CARD_MATCHED;
+        game->player_scores[game->current_player_index]++;
+        game->matched_pairs++;
+
+        logger_log(LOG_INFO, "MATCH! %s matched cards %d and %d, score=%d",
+                   game->players[game->current_player_index]->nickname,
+                   game->first_card_index, game->second_card_index,
+                   game->player_scores[game->current_player_index]);
+
+        // Reset for next turn (same player continues)
+        game->first_card_index = -1;
+        game->second_card_index = -1;
+        game->flips_this_turn = 0;
+
+        // Check if game finished
+        if (game->matched_pairs == game->total_pairs) {
+            game->state = GAME_STATE_FINISHED;
+            logger_log(LOG_INFO, "Game finished! All pairs matched");
+        }
+
+        return 1; // Match
+    } else {
+        // MISMATCH
+        game->cards[game->first_card_index].state = CARD_HIDDEN;
+        game->cards[game->second_card_index].state = CARD_HIDDEN;
+
+        logger_log(LOG_INFO, "MISMATCH! %s cards %d and %d",
+                   game->players[game->current_player_index]->nickname,
+                   game->first_card_index, game->second_card_index);
+
+        // Move to next player
+        game->current_player_index = (game->current_player_index + 1) % game->player_count;
+
+        logger_log(LOG_INFO, "Turn passed to %s",
+                   game->players[game->current_player_index]->nickname);
+
+        // Reset
+        game->first_card_index = -1;
+        game->second_card_index = -1;
+        game->flips_this_turn = 0;
+
+        return 0; // Mismatch
+    }
+}
+```
+
+#### 4. Implementuj pomocné funkce v `game.c`
+
+```c
+int game_player_ready(game_t *game, client_t *client) {
+    if (game == NULL || client == NULL) return -1;
+    if (game->state != GAME_STATE_WAITING) return -1;
+
+    for (int i = 0; i < game->player_count; i++) {
+        if (game->players[i] == client) {
+            game->player_ready[i] = 1;
+            logger_log(LOG_INFO, "Player %s ready", client->nickname);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int game_all_players_ready(game_t *game) {
+    if (game == NULL) return 0;
+    for (int i = 0; i < game->player_count; i++) {
+        if (game->player_ready[i] == 0) return 0;
+    }
+    return 1;
+}
+
+int game_start(game_t *game) {
+    if (game == NULL || game->state != GAME_STATE_WAITING) return -1;
+    game->state = GAME_STATE_PLAYING;
+    game->current_player_index = 0;
+    logger_log(LOG_INFO, "Game started, first player: %s",
+               game->players[0]->nickname);
+    return 0;
+}
+
+client_t* game_get_current_player(game_t *game) {
+    if (game == NULL || game->state != GAME_STATE_PLAYING) return NULL;
+    return game->players[game->current_player_index];
+}
+
+int game_is_finished(game_t *game) {
+    if (game == NULL) return 0;
+    return (game->state == GAME_STATE_FINISHED);
+}
+
+int game_get_winners(game_t *game, client_t **winners) {
+    if (game == NULL || winners == NULL) return 0;
+
+    // Find max score
+    int max_score = 0;
+    for (int i = 0; i < game->player_count; i++) {
+        if (game->player_scores[i] > max_score) {
+            max_score = game->player_scores[i];
+        }
+    }
+
+    // Collect all with max score (handles ties)
+    int winner_count = 0;
+    for (int i = 0; i < game->player_count; i++) {
+        if (game->player_scores[i] == max_score) {
+            winners[winner_count++] = game->players[i];
+        }
+    }
+
+    logger_log(LOG_INFO, "Winners: %d player(s) with score %d",
+               winner_count, max_score);
+    return winner_count;
+}
+
+int game_format_start_message(game_t *game, char *buffer, int buffer_size) {
+    if (game == NULL || buffer == NULL) return -1;
+
+    int offset = snprintf(buffer, buffer_size, "GAME_START %d", game->board_size);
+    for (int i = 0; i < game->player_count; i++) {
+        offset += snprintf(buffer + offset, buffer_size - offset, " %s",
+                           game->players[i]->nickname);
+    }
+    return 0;
+}
+
+int game_format_state_message(game_t *game, char *buffer, int buffer_size) {
+    if (game == NULL || buffer == NULL) return -1;
+
+    int offset = snprintf(buffer, buffer_size, "GAME_STATE %d %s",
+                          game->board_size,
+                          game->players[game->current_player_index]->nickname);
+
+    // Add scores
+    for (int i = 0; i < game->player_count; i++) {
+        offset += snprintf(buffer + offset, buffer_size - offset, " %d",
+                           game->player_scores[i]);
+    }
+
+    // Add card states (0=hidden, 1=matched)
+    for (int i = 0; i < game->total_cards; i++) {
+        offset += snprintf(buffer + offset, buffer_size - offset, " %d",
+                           (game->cards[i].state == CARD_MATCHED) ? 1 : 0);
+    }
+    return 0;
+}
+```
+
+#### 5. Aktualizuj `protocol.h`
+
+Přidej nové příkazy:
+```c
+// Client → Server
+#define CMD_READY "READY"
+#define CMD_START_GAME "START_GAME"
+#define CMD_FLIP "FLIP"
+
+// Server → Client
+#define CMD_PLAYER_READY "PLAYER_READY"
+#define CMD_GAME_START "GAME_START"
+#define CMD_CARD_REVEAL "CARD_REVEAL"
+#define CMD_MATCH "MATCH"
+#define CMD_MISMATCH "MISMATCH"
+#define CMD_YOUR_TURN "YOUR_TURN"
+#define CMD_GAME_END "GAME_END"
+```
+
+#### 6. Aktualizuj `room.h`
+
+```c
+// Forward declaration
+struct game_s;
+
+typedef struct room_s {
+    // ... existující fieldy ...
+    struct game_s *game;  // Game instance (NULL if no game)
+} room_t;
+```
+
+#### 7. Aktualizuj `room.c`
+
+V `room_create()`:
+```c
+room->game = NULL;  // No game initially
+```
+
+#### 8. Přidej handlery do `client_handler.c`
+
+Na začátek souboru:
+```c
+#include "game.h"
+
+// Forward declarations
+static void handle_ready(client_t *client);
+static void handle_start_game(client_t *client);
+static void handle_flip(client_t *client, const char *params);
+```
+
+Do `handle_message()` přidej:
+```c
+// V sekci s parametry
+else if (strcmp(command, CMD_FLIP) == 0) {
+    handle_flip(client, params);
+}
+
+// V sekci bez parametrů
+else if (strcmp(command, CMD_READY) == 0) {
+    handle_ready(client);
+} else if (strcmp(command, CMD_START_GAME) == 0) {
+    handle_start_game(client);
+}
+```
+
+Implementace `handle_start_game()`:
+```c
+static void handle_start_game(client_t *client) {
+    if (client->room == NULL) {
+        client_send_message(client, "ERROR NOT_IN_ROOM");
+        return;
+    }
+
+    room_t *room = client->room;
+
+    // Only owner can start
+    if (room->owner != client) {
+        client_send_message(client, "ERROR NOT_ROOM_OWNER");
+        return;
+    }
+
+    // Check game doesn't exist
+    if (room->game != NULL) {
+        client_send_message(client, "ERROR Game already started");
+        return;
+    }
+
+    // Need at least 2 players
+    if (room->player_count < 2) {
+        client_send_message(client, "ERROR NEED_MORE_PLAYERS");
+        return;
+    }
+
+    // Create game (4x4 board)
+    int board_size = 4;
+    room->game = game_create(board_size, room->players, room->player_count);
+
+    if (room->game == NULL) {
+        client_send_message(client, "ERROR Failed to create game");
+        return;
+    }
+
+    // Broadcast to all
+    char broadcast[MAX_MESSAGE_LENGTH];
+    snprintf(broadcast, sizeof(broadcast),
+             "GAME_CREATED %d Send READY when prepared", board_size);
+    room_broadcast(room, broadcast);
+
+    logger_log(LOG_INFO, "Room %d: Game created by %s",
+               room->room_id, client->nickname);
+}
+```
+
+Implementace `handle_ready()`:
+```c
+static void handle_ready(client_t *client) {
+    if (client->room == NULL) {
+        client_send_message(client, "ERROR NOT_IN_ROOM");
+        return;
+    }
+
+    room_t *room = client->room;
+
+    if (room->game == NULL) {
+        client_send_message(client, "ERROR GAME_NOT_STARTED");
+        return;
+    }
+
+    game_t *game = (game_t *)room->game;
+
+    if (game_player_ready(game, client) != 0) {
+        client_send_message(client, "ERROR Already ready");
+        return;
+    }
+
+    // Confirm
+    client_send_message(client, "READY_OK");
+
+    // Broadcast
+    char broadcast[MAX_MESSAGE_LENGTH];
+    snprintf(broadcast, sizeof(broadcast), "PLAYER_READY %s", client->nickname);
+    room_broadcast(room, broadcast);
+
+    // Check if all ready
+    if (game_all_players_ready(game)) {
+        logger_log(LOG_INFO, "All players ready, starting game");
+
+        game_start(game);
+        room->state = ROOM_STATE_PLAYING;
+
+        // Send GAME_START to all
+        char start_msg[MAX_MESSAGE_LENGTH];
+        game_format_start_message(game, start_msg, sizeof(start_msg));
+        room_broadcast(room, start_msg);
+
+        // Send YOUR_TURN to first player
+        client_t *first = game_get_current_player(game);
+        if (first != NULL) {
+            client_send_message(first, "YOUR_TURN");
+        }
+    }
+}
+```
+
+Implementace `handle_flip()`:
+```c
+static void handle_flip(client_t *client, const char *params) {
+    if (client->room == NULL) {
+        client_send_message(client, "ERROR NOT_IN_ROOM");
+        return;
+    }
+
+    room_t *room = client->room;
+
+    if (room->game == NULL) {
+        client_send_message(client, "ERROR GAME_NOT_STARTED");
+        return;
+    }
+
+    game_t *game = (game_t *)room->game;
+
+    if (params == NULL) {
+        client_send_message(client, "ERROR INVALID_PARAMS");
+        return;
+    }
+
+    int card_index = atoi(params);
+
+    // Attempt flip
+    if (game_flip_card(game, client, card_index) != 0) {
+        client_send_message(client, "ERROR INVALID_CARD");
+        return;
+    }
+
+    // Broadcast CARD_REVEAL
+    char reveal[MAX_MESSAGE_LENGTH];
+    snprintf(reveal, sizeof(reveal), "CARD_REVEAL %d %d %s",
+             card_index,
+             game->cards[card_index].value,
+             client->nickname);
+    room_broadcast(room, reveal);
+
+    // If second card, check match
+    if (game->flips_this_turn == 2) {
+        int is_match = game_check_match(game);
+
+        if (is_match) {
+            // MATCH!
+            char match_msg[MAX_MESSAGE_LENGTH];
+            snprintf(match_msg, sizeof(match_msg), "MATCH %s %d",
+                     client->nickname,
+                     game->player_scores[game->current_player_index]);
+            room_broadcast(room, match_msg);
+
+            // Check if finished
+            if (game_is_finished(game)) {
+                client_t *winners[MAX_PLAYERS_PER_ROOM];
+                int winner_count = game_get_winners(game, winners);
+
+                // Send GAME_END
+                char end_msg[MAX_MESSAGE_LENGTH];
+                int offset = snprintf(end_msg, sizeof(end_msg), "GAME_END");
+                for (int i = 0; i < winner_count; i++) {
+                    offset += snprintf(end_msg + offset, sizeof(end_msg) - offset,
+                                       " %s %d", winners[i]->nickname,
+                                       game->player_scores[i]);
+                }
+                room_broadcast(room, end_msg);
+
+                // Cleanup
+                game_destroy(game);
+                room->game = NULL;
+                room->state = ROOM_STATE_WAITING;
+            } else {
+                // Same player continues
+                client_send_message(client, "YOUR_TURN");
+            }
+        } else {
+            // MISMATCH
+            room_broadcast(room, "MISMATCH");
+
+            // Next player
+            client_t *next = game_get_current_player(game);
+            if (next != NULL) {
+                client_send_message(next, "YOUR_TURN");
+            }
+        }
+    }
+}
+```
+
+#### 9. Aktualizuj `Makefile`
+
+```makefile
+SOURCES = main.c server.c client_handler.c logger.c room.c game.c
+
+game.o: game.c game.h client_handler.h logger.h protocol.h
+client_handler.o: client_handler.c client_handler.h room.h game.h logger.h protocol.h
+```
+
+#### 10. Zkompiluj a testuj
+
+```bash
+make clean && make
+./server 127.0.0.1 10000 10 50
+```
+
+**Test herního flow:**
+
+Terminál 2 (Alice):
+```
+nc 127.0.0.1 10000
+HELLO Alice
+CREATE_ROOM GameRoom 2
+START_GAME
+READY
+```
+
+Terminál 3 (Bob):
+```
+nc 127.0.0.1 10000
+HELLO Bob
+JOIN_ROOM 1
+READY
+```
+
+Po tom, co jsou oba ready, Alice dostane `YOUR_TURN`.
+
+Alice hraje:
+```
+FLIP 0
+```
+→ All: `CARD_REVEAL 0 3 Alice`
+
+```
+FLIP 5
+```
+→ All: `CARD_REVEAL 5 3 Alice`
+→ All: `MATCH Alice 1`
+→ Alice: `YOUR_TURN`
+
+Alice zkusí další:
+```
+FLIP 1
+FLIP 2
+```
+→ All: `CARD_REVEAL 1 7 Alice`
+→ All: `CARD_REVEAL 2 2 Alice`
+→ All: `MISMATCH`
+→ Bob: `YOUR_TURN`
+
+**Výstup:** Plně funkční Pexeso hra!
+
+---
+
 ## TIPY A TRIKY
 
 ### Debugging:

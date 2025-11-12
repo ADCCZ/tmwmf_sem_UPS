@@ -5,7 +5,7 @@ CFLAGS = -Wall -Wextra -pthread -g -std=c99
 LDFLAGS = -pthread
 
 # Source files
-SOURCES = main.c server.c client_handler.c logger.c room.c
+SOURCES = main.c server.c client_handler.c logger.c room.c game.c
 OBJECTS = $(SOURCES:.c=.o)
 TARGET = server
 
@@ -37,8 +37,9 @@ valgrind: $(TARGET)
 # Dependencies
 main.o: main.c server.h logger.h
 server.o: server.c server.h client_handler.h room.h logger.h protocol.h
-client_handler.o: client_handler.c client_handler.h room.h logger.h protocol.h
+client_handler.o: client_handler.c client_handler.h room.h game.h logger.h protocol.h
 logger.o: logger.c logger.h
 room.o: room.c room.h client_handler.h logger.h protocol.h
+game.o: game.c game.h client_handler.h logger.h protocol.h
 
 .PHONY: all clean run valgrind

@@ -7,6 +7,9 @@
  * Room module - manages lobby and game rooms
  */
 
+// Forward declaration for game
+struct game_s;
+
 #define MAX_PLAYERS_PER_ROOM 4
 #define MAX_ROOM_NAME_LENGTH 64
 
@@ -24,7 +27,7 @@ typedef struct room_s {
     int max_players;
     room_state_t state;
     client_t *owner;  // Room creator
-    // game_t *game;  // Will be added in future packets
+    struct game_s *game;  // Game instance (NULL if no game)
 } room_t;
 
 /**

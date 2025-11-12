@@ -1,5 +1,6 @@
 #include "client_handler.h"
 #include "room.h"
+#include "game.h"
 #include "logger.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,9 @@ static void handle_list_rooms(client_t *client);
 static void handle_create_room(client_t *client, const char *params);
 static void handle_join_room(client_t *client, const char *params);
 static void handle_leave_room(client_t *client);
+static void handle_ready(client_t *client);
+static void handle_start_game(client_t *client);
+static void handle_flip(client_t *client, const char *params);
 static void handle_pong(client_t *client);
 
 int client_send_message(client_t *client, const char *message) {
@@ -65,6 +69,8 @@ static void handle_message(client_t *client, const char *message) {
             handle_create_room(client, params);
         } else if (strcmp(command, CMD_JOIN_ROOM) == 0) {
             handle_join_room(client, params);
+        } else if (strcmp(command, CMD_FLIP) == 0) {
+            handle_flip(client, params);
         } else {
             logger_log(LOG_WARNING, "Client %d: Unknown command: %s", client->client_id, command);
             client_send_message(client, "ERROR INVALID_COMMAND Unknown command");
@@ -78,6 +84,10 @@ static void handle_message(client_t *client, const char *message) {
             handle_list_rooms(client);
         } else if (strcmp(command, CMD_LEAVE_ROOM) == 0) {
             handle_leave_room(client);
+        } else if (strcmp(command, CMD_READY) == 0) {
+            handle_ready(client);
+        } else if (strcmp(command, CMD_START_GAME) == 0) {
+            handle_start_game(client);
         } else if (strcmp(command, CMD_PONG) == 0) {
             handle_pong(client);
         } else {
@@ -253,6 +263,208 @@ static void handle_leave_room(client_t *client) {
     }
 
     logger_log(LOG_INFO, "Client %d (%s) left room %d", client->client_id, client->nickname, room_id);
+}
+
+static void handle_ready(client_t *client) {
+    if (client->room == NULL) {
+        client_send_message(client, "ERROR NOT_IN_ROOM Not in a room");
+        return;
+    }
+
+    room_t *room = client->room;
+
+    if (room->game == NULL) {
+        client_send_message(client, "ERROR GAME_NOT_STARTED Game not started");
+        return;
+    }
+
+    game_t *game = (game_t *)room->game;
+
+    if (game_player_ready(game, client) != 0) {
+        client_send_message(client, "ERROR Already ready or game already started");
+        return;
+    }
+
+    // Send confirmation
+    client_send_message(client, "READY_OK");
+
+    // Broadcast to other players
+    char broadcast[MAX_MESSAGE_LENGTH];
+    snprintf(broadcast, sizeof(broadcast), "PLAYER_READY %s", client->nickname);
+    room_broadcast(room, broadcast);
+
+    logger_log(LOG_INFO, "Client %d (%s) marked ready in room %d",
+               client->client_id, client->nickname, room->room_id);
+
+    // Check if all players ready
+    if (game_all_players_ready(game)) {
+        logger_log(LOG_INFO, "All players ready in room %d, starting game", room->room_id);
+
+        // Start the game
+        if (game_start(game) == 0) {
+            room->state = ROOM_STATE_PLAYING;
+
+            // Send GAME_START to all players
+            char game_start_msg[MAX_MESSAGE_LENGTH];
+            game_format_start_message(game, game_start_msg, sizeof(game_start_msg));
+            room_broadcast(room, game_start_msg);
+
+            // Send TURN to first player
+            client_t *first_player = game_get_current_player(game);
+            if (first_player != NULL) {
+                client_send_message(first_player, "YOUR_TURN");
+                logger_log(LOG_INFO, "Room %d: First turn goes to %s",
+                           room->room_id, first_player->nickname);
+            }
+        }
+    }
+}
+
+static void handle_start_game(client_t *client) {
+    if (client->room == NULL) {
+        client_send_message(client, "ERROR NOT_IN_ROOM Not in a room");
+        return;
+    }
+
+    room_t *room = client->room;
+
+    // Only room owner can start game
+    if (room->owner != client) {
+        client_send_message(client, "ERROR NOT_ROOM_OWNER Only room owner can start game");
+        return;
+    }
+
+    // Check if game already exists
+    if (room->game != NULL) {
+        client_send_message(client, "ERROR Game already started");
+        return;
+    }
+
+    // Need at least 2 players
+    if (room->player_count < 2) {
+        client_send_message(client, "ERROR NEED_MORE_PLAYERS Need at least 2 players");
+        return;
+    }
+
+    // Create game with default board size (4x4)
+    int board_size = 4;
+    room->game = game_create(board_size, room->players, room->player_count);
+
+    if (room->game == NULL) {
+        client_send_message(client, "ERROR Failed to create game");
+        logger_log(LOG_ERROR, "Failed to create game for room %d", room->room_id);
+        return;
+    }
+
+    // Send confirmation to owner
+    client_send_message(client, "GAME_CREATED Wait for all players to be ready");
+
+    // Broadcast to all players that game is created and they need to be ready
+    char broadcast[MAX_MESSAGE_LENGTH];
+    snprintf(broadcast, sizeof(broadcast),
+             "GAME_CREATED %d Send READY when you are prepared to play", board_size);
+    room_broadcast(room, broadcast);
+
+    logger_log(LOG_INFO, "Room %d: Game created by %s (board_size=%d, players=%d)",
+               room->room_id, client->nickname, board_size, room->player_count);
+}
+
+static void handle_flip(client_t *client, const char *params) {
+    if (client->room == NULL) {
+        client_send_message(client, "ERROR NOT_IN_ROOM Not in a room");
+        return;
+    }
+
+    room_t *room = client->room;
+
+    if (room->game == NULL) {
+        client_send_message(client, "ERROR GAME_NOT_STARTED Game not started");
+        return;
+    }
+
+    game_t *game = (game_t *)room->game;
+
+    if (params == NULL) {
+        client_send_message(client, "ERROR INVALID_PARAMS Card index required");
+        return;
+    }
+
+    int card_index = atoi(params);
+
+    // Attempt to flip card
+    if (game_flip_card(game, client, card_index) != 0) {
+        client_send_message(client, "ERROR INVALID_CARD Cannot flip that card");
+        return;
+    }
+
+    // Send CARD_REVEAL to all players
+    char reveal_msg[MAX_MESSAGE_LENGTH];
+    snprintf(reveal_msg, sizeof(reveal_msg), "CARD_REVEAL %d %d %s",
+             card_index,
+             game->cards[card_index].value,
+             client->nickname);
+    room_broadcast(room, reveal_msg);
+
+    logger_log(LOG_INFO, "Room %d: Player %s flipped card %d (value=%d)",
+               room->room_id, client->nickname, card_index,
+               game->cards[card_index].value);
+
+    // If this was the second card, check for match
+    if (game->flips_this_turn == 2) {
+        int is_match = game_check_match(game);
+
+        if (is_match) {
+            // MATCH!
+            char match_msg[MAX_MESSAGE_LENGTH];
+            snprintf(match_msg, sizeof(match_msg), "MATCH %s %d",
+                     client->nickname,
+                     game->player_scores[game->current_player_index]);
+            room_broadcast(room, match_msg);
+
+            // Check if game is finished
+            if (game_is_finished(game)) {
+                // Get winners
+                client_t *winners[MAX_PLAYERS_PER_ROOM];
+                int winner_count = game_get_winners(game, winners);
+
+                // Format GAME_END message
+                char game_end_msg[MAX_MESSAGE_LENGTH];
+                int offset = snprintf(game_end_msg, sizeof(game_end_msg), "GAME_END");
+
+                for (int i = 0; i < winner_count; i++) {
+                    offset += snprintf(game_end_msg + offset,
+                                       sizeof(game_end_msg) - offset,
+                                       " %s %d",
+                                       winners[i]->nickname,
+                                       game->player_scores[i]);
+                }
+
+                room_broadcast(room, game_end_msg);
+
+                logger_log(LOG_INFO, "Room %d: Game finished, %d winner(s)",
+                           room->room_id, winner_count);
+
+                // Clean up game
+                game_destroy(game);
+                room->game = NULL;
+                room->state = ROOM_STATE_WAITING;
+            } else {
+                // Same player continues, send YOUR_TURN
+                client_send_message(client, "YOUR_TURN");
+            }
+        } else {
+            // MISMATCH
+            room_broadcast(room, "MISMATCH");
+
+            // Send YOUR_TURN to next player
+            client_t *next_player = game_get_current_player(game);
+            if (next_player != NULL) {
+                client_send_message(next_player, "YOUR_TURN");
+                logger_log(LOG_INFO, "Room %d: Turn passed to %s",
+                           room->room_id, next_player->nickname);
+            }
+        }
+    }
 }
 
 static void handle_pong(client_t *client) {

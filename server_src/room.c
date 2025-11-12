@@ -88,6 +88,7 @@ room_t* room_create(const char *name, int max_players, client_t *owner) {
     room->player_count = 0;
     room->state = ROOM_STATE_WAITING;
     room->owner = owner;
+    room->game = NULL;  // No game initially
 
     for (int i = 0; i < MAX_PLAYERS_PER_ROOM; i++) {
         room->players[i] = NULL;

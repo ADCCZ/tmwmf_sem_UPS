@@ -96,25 +96,79 @@ public class GameController implements MessageListener {
 
     @FXML
     private void handleStartGame() {
-        if (!isOwner) return;
+        // Validate connection
+        if (connection == null || !connection.isConnected()) {
+            showAlert("Not connected to server!");
+            return;
+        }
 
-        connection.sendMessage("START_GAME");
-        updateStatus("Creating game...");
-        startGameButton.setDisable(true);
+        // Validate is owner
+        if (!isOwner) {
+            showAlert("Only the room owner can start the game!");
+            return;
+        }
+
+        // Validate game not started
+        if (gameStarted) {
+            showAlert("Game has already started!");
+            return;
+        }
+
+        // Validate enough players
+        if (players.size() < 2) {
+            showAlert("Need at least 2 players to start!");
+            return;
+        }
+
+        // Send with error checking
+        boolean sent = connection.sendMessage("START_GAME");
+        if (sent) {
+            updateStatus("Creating game...");
+            startGameButton.setDisable(true);
+        } else {
+            showAlert("Failed to send command to server!");
+        }
     }
 
     @FXML
     private void handleReady() {
-        if (isReady) return;
+        // Validate connection
+        if (connection == null || !connection.isConnected()) {
+            showAlert("Not connected to server!");
+            return;
+        }
 
-        connection.sendMessage("READY");
-        readyButton.setDisable(true);
-        isReady = true;
-        updateStatus("Ready! Waiting for others...");
+        // Validate not already ready
+        if (isReady) {
+            showAlert("You are already ready!");
+            return;
+        }
+
+        // Validate game not started
+        if (gameStarted) {
+            showAlert("Game has already started!");
+            return;
+        }
+
+        // Send with error checking
+        boolean sent = connection.sendMessage("READY");
+        if (sent) {
+            readyButton.setDisable(true);
+            isReady = true;
+            updateStatus("Ready! Waiting for others...");
+        } else {
+            showAlert("Failed to send command to server!");
+        }
     }
 
     @FXML
     private void handleLeaveRoom() {
+        // Validate connection
+        if (connection == null || !connection.isConnected()) {
+            showAlert("Not connected to server!");
+            return;
+        }
+
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Leave Room");
         confirm.setHeaderText("Are you sure you want to leave?");
@@ -122,7 +176,10 @@ public class GameController implements MessageListener {
 
         Optional<ButtonType> result = confirm.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
-            connection.sendMessage("LEAVE_ROOM");
+            boolean sent = connection.sendMessage("LEAVE_ROOM");
+            if (!sent) {
+                showAlert("Failed to send command to server!");
+            }
         }
     }
 
@@ -195,6 +252,24 @@ public class GameController implements MessageListener {
     }
 
     private void handleCardClick(int index) {
+        // Validate connection
+        if (connection == null || !connection.isConnected()) {
+            showAlert("Not connected to server!");
+            return;
+        }
+
+        // Validate game state
+        if (!gameStarted) {
+            showAlert("Game hasn't started yet!");
+            return;
+        }
+
+        // Validate index bounds
+        if (cardButtons == null || index < 0 || index >= cardButtons.length) {
+            showAlert("Invalid card index!");
+            return;
+        }
+
         if (!myTurn) {
             showAlert("Not your turn!");
             return;
@@ -216,7 +291,10 @@ public class GameController implements MessageListener {
         }
 
         // Send FLIP command
-        connection.sendMessage("FLIP " + index);
+        boolean sent = connection.sendMessage("FLIP " + index);
+        if (!sent) {
+            showAlert("Failed to send command to server!");
+        }
     }
 
     private void revealCard(int index, int value, String playerName) {
@@ -440,15 +518,17 @@ public class GameController implements MessageListener {
 
                 if (cardValue > 0) {
                     // Card is matched
+                    final int finalIndex = i;
+                    final int finalValue = cardValue;
+
                     cardMatched[i] = true;
                     cardValues[i] = cardValue;
+
                     Platform.runLater(() -> {
-                        int finalI = i;
-                        int finalValue = cardValue;
-                        cardButtons[finalI].setText(String.valueOf(finalValue));
-                        cardButtons[finalI].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
+                        cardButtons[finalIndex].setText(String.valueOf(finalValue));
+                        cardButtons[finalIndex].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
                                                      "-fx-background-color: #4CAF50; -fx-text-fill: white;");
-                        cardButtons[finalI].setDisable(true);
+                        cardButtons[finalIndex].setDisable(true);
                     });
                 }
             }

@@ -107,6 +107,24 @@ public class LoginController implements MessageListener {
             return;
         }
 
+        // Check for invalid characters in nickname
+        if (nickname.contains(" ")) {
+            log("ERROR: Nickname cannot contain spaces");
+            return;
+        }
+
+        // Check for special characters that might break protocol
+        if (!nickname.matches("[a-zA-Z0-9_-]+")) {
+            log("ERROR: Nickname can only contain letters, numbers, underscores, and hyphens");
+            return;
+        }
+
+        // Basic IP address format validation
+        if (!ip.matches("^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$") && !ip.equals("localhost")) {
+            log("ERROR: Invalid IP address format (use IPv4 format: xxx.xxx.xxx.xxx or 'localhost')");
+            return;
+        }
+
         int port;
         try {
             port = Integer.parseInt(portStr);

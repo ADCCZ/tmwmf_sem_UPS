@@ -21,6 +21,34 @@ static void handle_flip(client_t *client, const char *params);
 static void handle_pong(client_t *client);
 static void handle_reconnect(client_t *client, const char *params);
 
+// Helper function to send error and increment error counter
+static void send_error_and_count(client_t *client, const char *error_code, const char *details) {
+    char error_msg[MAX_MESSAGE_LENGTH];
+
+    if (details != NULL && strlen(details) > 0) {
+        snprintf(error_msg, sizeof(error_msg), "ERROR %s %s", error_code, details);
+    } else {
+        snprintf(error_msg, sizeof(error_msg), "ERROR %s", error_code);
+    }
+
+    client_send_message(client, error_msg);
+    client->invalid_message_count++;
+
+    logger_log(LOG_WARNING, "Client %d (%s): Error sent - %s (count: %d/%d)",
+              client->client_id,
+              client->nickname[0] ? client->nickname : "unauthenticated",
+              error_code,
+              client->invalid_message_count,
+              MAX_ERROR_COUNT);
+
+    // Disconnect after MAX_ERROR_COUNT errors
+    if (client->invalid_message_count >= MAX_ERROR_COUNT) {
+        logger_log(LOG_ERROR, "Client %d: Max error count reached, closing connection",
+                  client->client_id);
+        close(client->socket_fd);
+    }
+}
+
 int client_send_message(client_t *client, const char *message) {
     if (client == NULL || message == NULL) {
         return -1;
@@ -76,9 +104,7 @@ static void handle_message(client_t *client, const char *message) {
         } else if (strcmp(command, CMD_FLIP) == 0) {
             handle_flip(client, params);
         } else {
-            logger_log(LOG_WARNING, "Client %d: Unknown command: %s", client->client_id, command);
-            client_send_message(client, "ERROR INVALID_COMMAND Unknown command");
-            client->invalid_message_count++;
+            send_error_and_count(client, ERR_INVALID_COMMAND, command);
         }
     } else {
         // Command without parameters
@@ -95,9 +121,7 @@ static void handle_message(client_t *client, const char *message) {
         } else if (strcmp(command, CMD_PONG) == 0) {
             handle_pong(client);
         } else {
-            logger_log(LOG_WARNING, "Client %d: Unknown command: %s", client->client_id, command);
-            client_send_message(client, "ERROR INVALID_COMMAND Unknown command");
-            client->invalid_message_count++;
+            send_error_and_count(client, ERR_INVALID_COMMAND, command);
         }
     }
 }
@@ -375,29 +399,48 @@ static void handle_start_game(client_t *client) {
 
 static void handle_flip(client_t *client, const char *params) {
     if (client->room == NULL) {
-        client_send_message(client, "ERROR NOT_IN_ROOM Not in a room");
+        send_error_and_count(client, ERR_NOT_IN_ROOM, "Not in a room");
         return;
     }
 
     room_t *room = client->room;
 
     if (room->game == NULL) {
-        client_send_message(client, "ERROR GAME_NOT_STARTED Game not started");
+        send_error_and_count(client, ERR_GAME_NOT_STARTED, "Game not started");
         return;
     }
 
     game_t *game = (game_t *)room->game;
 
-    if (params == NULL) {
-        client_send_message(client, "ERROR INVALID_PARAMS Card index required");
+    // Validate params
+    if (params == NULL || strlen(params) == 0) {
+        send_error_and_count(client, ERR_INVALID_SYNTAX, "Card index required");
         return;
     }
 
-    int card_index = atoi(params);
+    // Validate card_index is a number
+    char *endptr;
+    long card_index_long = strtol(params, &endptr, 10);
+
+    if (*endptr != '\0' && *endptr != ' ' && *endptr != '\n') {
+        send_error_and_count(client, ERR_INVALID_SYNTAX, "Card index must be a number");
+        return;
+    }
+
+    int card_index = (int)card_index_long;
+
+    // Validate card_index is within board bounds
+    if (card_index < 0 || card_index >= game->total_cards) {
+        char err_details[64];
+        snprintf(err_details, sizeof(err_details),
+                "Card index out of bounds (0-%d)", game->total_cards - 1);
+        send_error_and_count(client, ERR_INVALID_MOVE, err_details);
+        return;
+    }
 
     // Attempt to flip card
     if (game_flip_card(game, client, card_index) != 0) {
-        client_send_message(client, "ERROR INVALID_CARD Cannot flip that card");
+        send_error_and_count(client, ERR_INVALID_CARD, "Cannot flip that card");
         return;
     }
 

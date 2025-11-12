@@ -79,6 +79,12 @@ public class LobbyController implements MessageListener {
 
     @FXML
     private void handleCreateRoom() {
+        // Validate connection
+        if (connection == null || !connection.isConnected()) {
+            showError("Not connected", "You are not connected to the server.");
+            return;
+        }
+
         TextInputDialog nameDialog = new TextInputDialog("MyRoom");
         nameDialog.setTitle("Create Room");
         nameDialog.setHeaderText("Create a new game room");
@@ -90,6 +96,18 @@ public class LobbyController implements MessageListener {
         }
 
         String roomName = nameResult.get().trim();
+
+        // Validate room name
+        if (roomName.length() > 64) {
+            showError("Invalid room name", "Room name must be 64 characters or less.");
+            return;
+        }
+
+        // Check for invalid characters (spaces)
+        if (roomName.contains(" ")) {
+            showError("Invalid room name", "Room name cannot contain spaces.");
+            return;
+        }
 
         // Ask for max players
         ChoiceDialog<Integer> playersDialog = new ChoiceDialog<>(2, 2, 3, 4);
@@ -104,21 +122,53 @@ public class LobbyController implements MessageListener {
 
         int maxPlayers = playersResult.get();
 
+        // Validate max players
+        if (maxPlayers < 2 || maxPlayers > 4) {
+            showError("Invalid player count", "Max players must be between 2 and 4.");
+            return;
+        }
+
         // Send CREATE_ROOM command
-        connection.sendMessage(String.format("CREATE_ROOM %s %d", roomName, maxPlayers));
-        updateStatus("Creating room...");
+        boolean sent = connection.sendMessage(String.format("CREATE_ROOM %s %d", roomName, maxPlayers));
+        if (sent) {
+            updateStatus("Creating room...");
+        } else {
+            showError("Communication error", "Failed to send command to server.");
+        }
     }
 
     @FXML
     private void handleJoinRoom() {
+        // Validate connection
+        if (connection == null || !connection.isConnected()) {
+            showError("Not connected", "You are not connected to the server.");
+            return;
+        }
+
         Room selectedRoom = roomListView.getSelectionModel().getSelectedItem();
         if (selectedRoom == null) {
             showError("No room selected", "Please select a room to join.");
             return;
         }
 
-        connection.sendMessage("JOIN_ROOM " + selectedRoom.getId());
-        updateStatus("Joining room...");
+        // Validate room state
+        if ("PLAYING".equals(selectedRoom.getState())) {
+            showError("Room unavailable", "Cannot join a room that is already playing.");
+            return;
+        }
+
+        if (selectedRoom.getCurrentPlayers() >= selectedRoom.getMaxPlayers()) {
+            showError("Room full", "This room is already full.");
+            return;
+        }
+
+        // Send with error checking
+        boolean sent = connection.sendMessage("JOIN_ROOM " + selectedRoom.getId());
+        if (sent) {
+            updateStatus("Joining room...");
+        } else {
+            showError("Communication error", "Failed to send command to server.");
+        }
     }
 
     private void refreshRooms() {

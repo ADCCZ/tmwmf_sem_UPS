@@ -3478,6 +3478,691 @@ tail -f server.log
 
 ---
 
+## PACKET 9: VALIDACE A OŠETŘENÍ CHYB
+
+**Cíl:** Validovat všechny příkazy a parametry, ošetřit neplatné vstupy, automaticky odpojit klienty po opakovaných chybách.
+
+**Důležité:** Toto je kritické z pohledu zadání - server musí zvládat neplatné zprávy a náhodná data (např. z `/dev/urandom`).
+
+### 9.1 Server - Chybové kódy a validace
+
+#### Krok 1: Přidej chybové kódy do protocol.h
+
+```c
+// Error codes
+#define ERR_INVALID_COMMAND "INVALID_COMMAND"
+#define ERR_INVALID_SYNTAX "INVALID_SYNTAX"
+#define ERR_INVALID_PARAMS "INVALID_PARAMS"
+#define ERR_INVALID_MOVE "INVALID_MOVE"
+#define ERR_NOT_AUTHENTICATED "NOT_AUTHENTICATED"
+#define ERR_ALREADY_AUTHENTICATED "ALREADY_AUTHENTICATED"
+#define ERR_NICK_IN_USE "NICK_IN_USE"
+#define ERR_ROOM_NOT_FOUND "ROOM_NOT_FOUND"
+#define ERR_ROOM_FULL "ROOM_FULL"
+#define ERR_NOT_IN_ROOM "NOT_IN_ROOM"
+#define ERR_NOT_ROOM_OWNER "NOT_ROOM_OWNER"
+#define ERR_GAME_NOT_STARTED "GAME_NOT_STARTED"
+#define ERR_NOT_YOUR_TURN "NOT_YOUR_TURN"
+#define ERR_INVALID_CARD "INVALID_CARD"
+#define ERR_NOT_IMPLEMENTED "NOT_IMPLEMENTED"
+
+// Error handling
+#define MAX_ERROR_COUNT 3  // Disconnect after 3 errors
+```
+
+#### Krok 2: Přidej počítadlo chyb do client_t
+
+V `client_handler.h`:
+```c
+typedef struct {
+    int socket_fd;
+    int client_id;
+    char nickname[MAX_NICK_LENGTH + 1];
+    client_state_t state;
+    time_t last_activity;
+    int invalid_message_count;  // <-- Přidej toto
+    // ... ostatní fieldy ...
+} client_t;
+```
+
+#### Krok 3: Implementuj pomocnou funkci send_error_and_count()
+
+V `client_handler.c`:
+```c
+/**
+ * Pošle chybovou zprávu klientovi a zvýší počítadlo chyb.
+ * Po MAX_ERROR_COUNT chybách automaticky odpojí klienta.
+ */
+static void send_error_and_count(client_t *client, const char *error_code, const char *details) {
+    char error_msg[MAX_MESSAGE_LENGTH];
+
+    // Formátuj chybovou zprávu
+    if (details != NULL && strlen(details) > 0) {
+        snprintf(error_msg, sizeof(error_msg), "ERROR %s %s", error_code, details);
+    } else {
+        snprintf(error_msg, sizeof(error_msg), "ERROR %s", error_code);
+    }
+
+    // Pošli klientovi
+    client_send_message(client, error_msg);
+
+    // Zvyš počítadlo
+    client->invalid_message_count++;
+
+    // Loguj s počítadlem
+    logger_log(LOG_WARNING, "Client %d (%s): Error #%d - %s",
+               client->client_id, client->nickname,
+               client->invalid_message_count, error_msg);
+
+    // Auto-disconnect po MAX_ERROR_COUNT chybách
+    if (client->invalid_message_count >= MAX_ERROR_COUNT) {
+        logger_log(LOG_WARNING, "Client %d: Disconnecting due to %d errors",
+                   client->client_id, MAX_ERROR_COUNT);
+        close(client->socket_fd);  // Zavře socket → disconnect
+    }
+}
+```
+
+**Proč `close(socket_fd)` místo nějaké disconnect funkce?**
+- Zavření socketu automaticky spustí disconnect handler v hlavní smyčce
+- Není třeba duplikovat cleanup logiku
+- Thread-safe řešení
+
+#### Krok 4: Validuj neznámé příkazy v handle_message()
+
+```c
+static void handle_message(client_t *client, const char *message) {
+    // Parse command
+    char command[MAX_MESSAGE_LENGTH];
+    const char *params = NULL;
+
+    sscanf(message, "%s", command);
+    const char *space = strchr(message, ' ');
+    if (space != NULL) {
+        params = space + 1;
+    }
+
+    // Handle known commands
+    if (strcmp(command, CMD_HELLO) == 0) {
+        handle_hello(client, params);
+    } else if (strcmp(command, CMD_LIST_ROOMS) == 0) {
+        handle_list_rooms(client);
+    } else if (strcmp(command, CMD_CREATE_ROOM) == 0) {
+        handle_create_room(client, params);
+    } else if (strcmp(command, CMD_JOIN_ROOM) == 0) {
+        handle_join_room(client, params);
+    } else if (strcmp(command, CMD_LEAVE_ROOM) == 0) {
+        handle_leave_room(client);
+    } else if (strcmp(command, CMD_READY) == 0) {
+        handle_ready(client);
+    } else if (strcmp(command, CMD_START_GAME) == 0) {
+        handle_start_game(client);
+    } else if (strcmp(command, CMD_FLIP) == 0) {
+        handle_flip(client, params);
+    } else if (strcmp(command, CMD_PONG) == 0) {
+        handle_pong(client);
+    } else if (strcmp(command, CMD_RECONNECT) == 0) {
+        handle_reconnect(client, params);
+    } else if (strcmp(command, CMD_QUIT) == 0) {
+        handle_quit(client);
+    } else {
+        // NEZNÁMÝ PŘÍKAZ - použij error counter
+        send_error_and_count(client, ERR_INVALID_COMMAND, command);
+    }
+}
+```
+
+#### Krok 5: Validuj parametry FLIP příkazu
+
+**Důležité: Použij `strtol()` místo `atoi()`!**
+
+Proč?
+- `atoi("abc")` vrátí `0` (žádná detekce chyby!)
+- `atoi("0")` také vrátí `0` (nemůžeš rozlišit validní 0 od chyby)
+- `strtol()` nastaví `endptr` na první neplatný znak → detekce chyb!
+
+V `handle_flip()`:
+```c
+static void handle_flip(client_t *client, const char *params) {
+    // 1. VALIDACE: params není NULL/prázdné
+    if (params == NULL || strlen(params) == 0) {
+        send_error_and_count(client, ERR_INVALID_SYNTAX, "Card index required");
+        return;
+    }
+
+    // 2. VALIDACE: card_index je číslo (použij strtol!)
+    char *endptr;
+    long card_index_long = strtol(params, &endptr, 10);
+
+    // Zkontroluj, jestli conversion byl úspěšný
+    if (*endptr != '\0' && *endptr != ' ' && *endptr != '\n') {
+        send_error_and_count(client, ERR_INVALID_SYNTAX, "Card index must be a number");
+        return;
+    }
+
+    int card_index = (int)card_index_long;
+
+    // 3. VALIDACE: Hra běží a klient je ve hře
+    if (client->state != STATE_IN_GAME) {
+        send_error_and_count(client, ERR_GAME_NOT_STARTED, "No active game");
+        return;
+    }
+
+    room_t *room = client->room;
+    if (room == NULL || room->game == NULL) {
+        send_error_and_count(client, ERR_GAME_NOT_STARTED, "No active game");
+        return;
+    }
+
+    game_t *game = room->game;
+
+    // 4. VALIDACE: Index je v rozsahu
+    if (card_index < 0 || card_index >= game->total_cards) {
+        char err_details[128];
+        snprintf(err_details, sizeof(err_details),
+                "Card index out of bounds (0-%d)", game->total_cards - 1);
+        send_error_and_count(client, ERR_INVALID_MOVE, err_details);
+        return;
+    }
+
+    // 5. VALIDACE: Je to tah tohoto klienta
+    if (game->current_player != client->game_player_index) {
+        send_error_and_count(client, ERR_NOT_YOUR_TURN, "Wait for your turn");
+        return;
+    }
+
+    // 6. VALIDACE: Karta není už matchnutá
+    if (game->cards[card_index].state == CARD_MATCHED) {
+        send_error_and_count(client, ERR_INVALID_CARD, "Card already matched");
+        return;
+    }
+
+    // 7. VALIDACE: Karta není už otočená v tomto tahu
+    if (game->cards[card_index].state == CARD_FACE_UP) {
+        send_error_and_count(client, ERR_INVALID_CARD, "Card already flipped");
+        return;
+    }
+
+    // Všechny validace prošly - proveď tah
+    game_flip_card(game, client, card_index);
+}
+```
+
+**Porovnání strtol vs atoi:**
+```c
+// atoi - ŠPATNĚ (nedokáže detekovat chybu)
+int val = atoi("abc");  // vrátí 0, ale "abc" není 0!
+int val = atoi("0");    // vrátí 0, ale jak rozlišit od chyby?
+
+// strtol - SPRÁVNĚ (dokáže detekovat chybu)
+char *endptr;
+long val = strtol("abc", &endptr, 10);
+if (*endptr != '\0') {
+    // Chyba! endptr ukazuje na 'a' (první neplatný znak)
+}
+
+long val = strtol("123abc", &endptr, 10);  // val=123, endptr ukazuje na 'a'
+if (*endptr != '\0') {
+    // Chyba! Zbytek stringu není validní
+}
+
+long val = strtol("42", &endptr, 10);  // val=42, endptr ukazuje na '\0'
+if (*endptr == '\0') {
+    // OK! Celý string byl validní číslo
+}
+```
+
+#### Krok 6: Testování validace
+
+**Test 1: Neznámý příkaz**
+```bash
+echo "UNKNOWN_CMD" | nc localhost 10000
+# Očekávaný výstup: ERROR INVALID_COMMAND UNKNOWN_CMD
+```
+
+**Test 2: FLIP bez parametru**
+```bash
+echo -e "HELLO TestUser\nFLIP" | nc localhost 10000
+# Očekávaný výstup: ERROR INVALID_SYNTAX Card index required
+```
+
+**Test 3: FLIP s neplatným číslem**
+```bash
+echo -e "HELLO TestUser\nFLIP abc" | nc localhost 10000
+# Očekávaný výstup: ERROR INVALID_SYNTAX Card index must be a number
+```
+
+**Test 4: FLIP mimo rozsah**
+```bash
+echo -e "HELLO TestUser\nFLIP 999" | nc localhost 10000
+# Očekávaný výstup: ERROR INVALID_MOVE Card index out of bounds (0-15)
+```
+
+**Test 5: Auto-disconnect po 3 chybách**
+```bash
+echo -e "HELLO TestUser\nBAD1\nBAD2\nBAD3\nLIST_ROOMS" | nc localhost 10000
+# Očekávaný výstup:
+# WELCOME ...
+# ERROR INVALID_COMMAND BAD1
+# ERROR INVALID_COMMAND BAD2
+# ERROR INVALID_COMMAND BAD3
+# [Connection closed by server]
+```
+
+**Test 6: Náhodná data (z zadání)**
+```bash
+cat /dev/urandom | nc 127.0.0.1 10000
+# Server by měl:
+# - Poslat několik ERROR INVALID_SYNTAX
+# - Po 3 chybách odpojit klienta
+# - Nezpadat (žádný segfault)
+```
+
+**Kontrola logů:**
+```bash
+tail -f server.log
+# Mělo by být vidět:
+# Client 5 (TestUser): Error #1 - ERROR INVALID_COMMAND BAD1
+# Client 5 (TestUser): Error #2 - ERROR INVALID_COMMAND BAD2
+# Client 5 (TestUser): Error #3 - ERROR INVALID_COMMAND BAD3
+# Client 5: Disconnecting due to 3 errors
+# Client 5 disconnected
+```
+
+### 9.2 Klient - Validace GUI vstupů
+
+**Cíl:** Zabránit odeslání neplatných příkazů už na straně klienta (lepší UX, méně zátěž serveru).
+
+#### Krok 1: Validace přihlášení (LoginController.java)
+
+```java
+private void connect() {
+    String ip = ipField.getText().trim();
+    String portStr = portField.getText().trim();
+    String nickname = nicknameField.getText().trim();
+
+    // Validace IP
+    if (ip.isEmpty()) {
+        log("ERROR: IP address is required");
+        return;
+    }
+
+    // Základní formát IPv4
+    if (!ip.matches("^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$") && !ip.equals("localhost")) {
+        log("ERROR: Invalid IP address format (use IPv4 format: xxx.xxx.xxx.xxx or 'localhost')");
+        return;
+    }
+
+    // Validace portu
+    if (portStr.isEmpty()) {
+        log("ERROR: Port is required");
+        return;
+    }
+
+    int port;
+    try {
+        port = Integer.parseInt(portStr);
+        if (port < 1 || port > 65535) {
+            log("ERROR: Port must be between 1 and 65535");
+            return;
+        }
+    } catch (NumberFormatException e) {
+        log("ERROR: Invalid port number");
+        return;
+    }
+
+    // Validace nicku
+    if (nickname.isEmpty()) {
+        log("ERROR: Nickname is required");
+        return;
+    }
+
+    if (nickname.length() > ProtocolConstants.MAX_NICK_LENGTH) {
+        log("ERROR: Nickname too long (max " + ProtocolConstants.MAX_NICK_LENGTH + " characters)");
+        return;
+    }
+
+    // Kontrola mezer (protokol používá mezeru jako delimiter)
+    if (nickname.contains(" ")) {
+        log("ERROR: Nickname cannot contain spaces");
+        return;
+    }
+
+    // Kontrola speciálních znaků
+    if (!nickname.matches("[a-zA-Z0-9_-]+")) {
+        log("ERROR: Nickname can only contain letters, numbers, underscores, and hyphens");
+        return;
+    }
+
+    // Všechny validace prošly - připoj se
+    // ... existing connection code ...
+}
+```
+
+#### Krok 2: Validace místností (LobbyController.java)
+
+**Vytvoření místnosti:**
+```java
+@FXML
+private void handleCreateRoom() {
+    // Validace připojení
+    if (connection == null || !connection.isConnected()) {
+        showError("Not connected", "You are not connected to the server.");
+        return;
+    }
+
+    // ... dialogové okno pro název ...
+
+    String roomName = nameResult.get().trim();
+
+    // Validace délky názvu
+    if (roomName.length() > 64) {
+        showError("Invalid room name", "Room name must be 64 characters or less.");
+        return;
+    }
+
+    // Kontrola mezer (protokol používá mezeru jako delimiter)
+    if (roomName.contains(" ")) {
+        showError("Invalid room name", "Room name cannot contain spaces.");
+        return;
+    }
+
+    // ... dialogové okno pro počet hráčů ...
+
+    int maxPlayers = playersResult.get();
+
+    // Validace počtu hráčů
+    if (maxPlayers < 2 || maxPlayers > 4) {
+        showError("Invalid player count", "Max players must be between 2 and 4.");
+        return;
+    }
+
+    // Pošli příkaz s kontrolou úspěchu
+    boolean sent = connection.sendMessage(String.format("CREATE_ROOM %s %d", roomName, maxPlayers));
+    if (sent) {
+        updateStatus("Creating room...");
+    } else {
+        showError("Communication error", "Failed to send command to server.");
+    }
+}
+```
+
+**Připojení k místnosti:**
+```java
+@FXML
+private void handleJoinRoom() {
+    // Validace připojení
+    if (connection == null || !connection.isConnected()) {
+        showError("Not connected", "You are not connected to the server.");
+        return;
+    }
+
+    Room selectedRoom = roomListView.getSelectionModel().getSelectedItem();
+
+    // Validace výběru
+    if (selectedRoom == null) {
+        showError("No room selected", "Please select a room to join.");
+        return;
+    }
+
+    // Validace stavu místnosti
+    if ("PLAYING".equals(selectedRoom.getState())) {
+        showError("Room unavailable", "Cannot join a room that is already playing.");
+        return;
+    }
+
+    // Validace volné místo
+    if (selectedRoom.getCurrentPlayers() >= selectedRoom.getMaxPlayers()) {
+        showError("Room full", "This room is already full.");
+        return;
+    }
+
+    // Pošli příkaz s kontrolou úspěchu
+    boolean sent = connection.sendMessage("JOIN_ROOM " + selectedRoom.getId());
+    if (sent) {
+        updateStatus("Joining room...");
+    } else {
+        showError("Communication error", "Failed to send command to server.");
+    }
+}
+```
+
+#### Krok 3: Validace herních akcí (GameController.java)
+
+**Kliknutí na kartu:**
+```java
+private void handleCardClick(int index) {
+    // Validace připojení
+    if (connection == null || !connection.isConnected()) {
+        showAlert("Not connected to server!");
+        return;
+    }
+
+    // Validace stavu hry
+    if (!gameStarted) {
+        showAlert("Game hasn't started yet!");
+        return;
+    }
+
+    // Validace indexu
+    if (cardButtons == null || index < 0 || index >= cardButtons.length) {
+        showAlert("Invalid card index!");
+        return;
+    }
+
+    // Validace tahu
+    if (!myTurn) {
+        showAlert("It's not your turn!");
+        return;
+    }
+
+    // Validace stavu karty
+    if (cardMatched[index]) {
+        showAlert("Card already matched!");
+        return;
+    }
+
+    if (flippedThisTurn >= 2) {
+        showAlert("Already flipped 2 cards this turn!");
+        return;
+    }
+
+    if (flippedIndices.contains(index)) {
+        showAlert("Card already flipped this turn!");
+        return;
+    }
+
+    // Pošli příkaz s kontrolou úspěchu
+    boolean sent = connection.sendMessage("FLIP " + index);
+    if (!sent) {
+        showAlert("Failed to send command to server!");
+    }
+}
+```
+
+**Start hry:**
+```java
+@FXML
+private void handleStartGame() {
+    // Validace připojení
+    if (connection == null || !connection.isConnected()) {
+        showAlert("Not connected to server!");
+        return;
+    }
+
+    // Validace oprávnění
+    if (!isOwner) {
+        showAlert("Only the room owner can start the game!");
+        return;
+    }
+
+    // Validace stavu
+    if (gameStarted) {
+        showAlert("Game has already started!");
+        return;
+    }
+
+    // Validace počtu hráčů
+    if (players.size() < 2) {
+        showAlert("Need at least 2 players to start!");
+        return;
+    }
+
+    // Pošli příkaz s kontrolou úspěchu
+    boolean sent = connection.sendMessage("START_GAME");
+    if (sent) {
+        updateStatus("Creating game...");
+        startGameButton.setDisable(true);
+    } else {
+        showAlert("Failed to send command to server!");
+    }
+}
+```
+
+**Ready button:**
+```java
+@FXML
+private void handleReady() {
+    // Validace připojení
+    if (connection == null || !connection.isConnected()) {
+        showAlert("Not connected to server!");
+        return;
+    }
+
+    // Validace stavu
+    if (isReady) {
+        showAlert("You are already ready!");
+        return;
+    }
+
+    if (gameStarted) {
+        showAlert("Game has already started!");
+        return;
+    }
+
+    // Pošli příkaz s kontrolou úspěchu
+    boolean sent = connection.sendMessage("READY");
+    if (sent) {
+        readyButton.setDisable(true);
+        isReady = true;
+        updateStatus("Ready! Waiting for others...");
+    } else {
+        showAlert("Failed to send command to server!");
+    }
+}
+```
+
+**Opuštění místnosti:**
+```java
+@FXML
+private void handleLeaveRoom() {
+    // Validace připojení
+    if (connection == null || !connection.isConnected()) {
+        showAlert("Not connected to server!");
+        return;
+    }
+
+    // Potvrzovací dialog
+    Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+    confirm.setTitle("Leave Room");
+    confirm.setHeaderText("Are you sure you want to leave?");
+    confirm.setContentText("The game will end if you leave.");
+
+    Optional<ButtonType> result = confirm.showAndWait();
+    if (result.isPresent() && result.get() == ButtonType.OK) {
+        boolean sent = connection.sendMessage("LEAVE_ROOM");
+        if (!sent) {
+            showAlert("Failed to send command to server!");
+        }
+    }
+}
+```
+
+### 9.3 Chybové zprávy - Přehled
+
+#### Server → Klient
+
+| Kód | Kdy nastane | Příklad zprávy |
+|-----|-------------|----------------|
+| `INVALID_COMMAND` | Neznámý příkaz | `ERROR INVALID_COMMAND UNKNOWN_CMD` |
+| `INVALID_SYNTAX` | Chybný formát | `ERROR INVALID_SYNTAX Card index required` |
+| `INVALID_SYNTAX` | Nečíselný parametr | `ERROR INVALID_SYNTAX Card index must be a number` |
+| `INVALID_MOVE` | Tah mimo pole | `ERROR INVALID_MOVE Card index out of bounds (0-15)` |
+| `NOT_YOUR_TURN` | Tah když není tah hráče | `ERROR NOT_YOUR_TURN Wait for your turn` |
+| `INVALID_CARD` | Karta už matchnutá | `ERROR INVALID_CARD Card already matched` |
+| `ROOM_FULL` | Místnost plná | `ERROR ROOM_FULL Room is full` |
+| `NICK_IN_USE` | Nick už použit | `ERROR NICK_IN_USE Nickname already taken` |
+
+#### Klient - Validační zprávy
+
+**Přihlášení:**
+- "ERROR: IP address is required"
+- "ERROR: Invalid IP address format..."
+- "ERROR: Port must be between 1 and 65535"
+- "ERROR: Nickname cannot contain spaces"
+- "ERROR: Nickname can only contain letters, numbers, underscores, and hyphens"
+
+**Místnosti:**
+- "Room name cannot contain spaces"
+- "Room name must be 64 characters or less"
+- "Max players must be between 2 and 4"
+- "Cannot join a room that is already playing"
+- "This room is already full"
+
+**Hra:**
+- "Not connected to server!"
+- "Game hasn't started yet!"
+- "It's not your turn!"
+- "Card already matched!"
+- "Need at least 2 players to start!"
+
+### 9.4 Testování Packetu 9
+
+**Test 1: Validace na klientovi**
+1. Spusť klienta
+2. Zkus prázdný nick → mělo by zabránit připojení
+3. Zkus nick se mezerou → mělo by zabránit
+4. Zkus neplatný port (999999) → mělo by zabránit
+5. ✅ Klient nepošle žádný neplatný příkaz
+
+**Test 2: Server validace**
+1. Připoj se netcat: `nc localhost 10000`
+2. Pošli: `UNKNOWN` → `ERROR INVALID_COMMAND UNKNOWN`
+3. Pošli: `FLIP` → `ERROR INVALID_SYNTAX Card index required`
+4. Pošli: `FLIP abc` → `ERROR INVALID_SYNTAX Card index must be a number`
+5. ✅ Server validuje všechny příkazy
+
+**Test 3: Error counter**
+1. Připoj se: `nc localhost 10000`
+2. Pošli: `HELLO TestUser` → `WELCOME`
+3. Pošli: `BAD1` → `ERROR INVALID_COMMAND BAD1`
+4. Pošli: `BAD2` → `ERROR INVALID_COMMAND BAD2`
+5. Pošli: `BAD3` → `ERROR INVALID_COMMAND BAD3`
+6. ✅ Server zavře spojení po 3. chybě
+
+**Test 4: Náhodná data (dle zadání)**
+```bash
+cat /dev/urandom | nc 127.0.0.1 10000
+```
+✅ Server by měl:
+- Poslat několik `ERROR INVALID_SYNTAX`
+- Po 3 chybách odpojit klienta
+- **Nezpadat** (žádný segfault!)
+
+**Test 5: Valgrind check**
+```bash
+valgrind --leak-check=full ./server 127.0.0.1 10000 10 50
+# Během testu posílej náhodná data
+cat /dev/urandom | nc 127.0.0.1 10000
+# Po ukončení serveru zkontroluj:
+# - 0 errors
+# - all heap blocks were freed
+```
+
+**Výstup:** Robustní server odolný proti neplatným vstupům!
+
+---
+
 ## TIPY A TRIKY
 
 ### Debugging:

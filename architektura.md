@@ -4,8 +4,12 @@
 
 ---
 
-Tento dokument popisuje architekturu celého projektu na úrovni modulů, tříd a datových struktur.  
+Tento dokument popisuje architekturu celého projektu na úrovni modulů, tříd a datových struktur.
 Slouží jako základ pro implementaci v dalších krocích.
+
+**Poznámka k paralelizaci:** Původní návrh počítal s `select()` single-threaded modelem. Během implementace bylo rozhodnuto použít **POSIX threads (thread-per-client)** z důvodu jednodušší implementace a snadnějšího debuggingu. Obě metody jsou povoleny zadáním (PozadavkyUPS.pdf, strana 2).
+
+**Stav implementace:** Aktuálně implementována kostra serveru (Packet 3) - `main.c`, `server.c`, `client_handler.c`, `logger.c`, `protocol.h`. Moduly `room.c`, `game.c`, `protocol.c` budou implementovány v dalších packetech.
 
 ---
 
@@ -49,28 +53,23 @@ server/
 
 #### 2.2 server.h / server.c
 **Odpovědnosti**
-- Vytvoření a nastavení listening socketu  
-- Správa hlavní event loop (`select`/`poll`/`epoll`)  
-- Přijímání nových připojení  
-- Volání `client_handler` pro zpracování příchozích zpráv  
-- Správa timeoutů (PING/PONG mechanismus)  
-- Koordinace mezi všemi klienty a místnostmi  
+- Vytvoření a nastavení listening socketu
+- Správa hlavní accept loop (přijímání nových spojení)
+- Vytváření nových threadů pro každého klienta (`pthread_create`)
+- Koordinace mezi všemi klienty a místnostmi
+- Správa konfigurace serveru (IP, port, limity)
 
 **Funkce**
 ```c
 int  server_init(const char *ip, int port, int max_rooms, int max_clients);
 void server_run(void);
 void server_shutdown(void);
-void server_accept_connection(int listen_fd);
-void server_process_client(int client_fd);
-void server_check_timeouts(void);
-void server_broadcast_to_room(int room_id, const char *message);
-void server_send_to_client(int client_fd, const char *message);
+server_config_t* server_get_config(void);
 ````
 
 **Globální struktury**
 
-* `server_context_t` – obsahuje `listen_fd`, `fdset`, seznam klientů, místností.
+* `server_config_t` – obsahuje `listen_fd`, `ip`, `port`, `max_rooms`, `max_clients`, `running`, `next_client_id`
 
 ---
 
@@ -187,36 +186,49 @@ Výsledek parsování textové zprávy – typ příkazu a parametry.
 
 #### 3.5 `server_config_t`
 
-Nastavení serveru (IP, port, limity, timeouty, log soubor).
-
-#### 3.6 `server_context_t`
-
-Hlavní kontext běhu serveru – fd_set, seznam klientů a místností, čítače ID, flag `running`.
+Hlavní konfigurace a stav běhu serveru:
+```c
+typedef struct {
+    char ip[64];          // IP adresa pro bind
+    int port;             // Port pro listening
+    int max_rooms;        // Maximální počet místností
+    int max_clients;      // Maximální počet klientů
+    int listen_fd;        // File descriptor listening socketu
+    int running;          // Flag: 1 = server běží, 0 = ukončit
+    int next_client_id;   // Čítač pro unikátní ID klientů
+} server_config_t;
+```
 
 ---
 
 ### 4. ROZHODNUTÍ O PARALELIZACI
 
-**Zvoleno:** `select()` – single-threaded model
+**Zvoleno:** POSIX threads (pthread) – thread-per-client model
 
-**Výhody**
+**Důvody pro vlákna**
 
-* Jednoduchá synchronizace (vše v jednom vlákně)
-* Žádné mutexy – nižší riziko deadlocků
-* Nižší overhead a snadnější ladění
+* Jednoduchá implementace – každý klient má vlastní kontext
+* Blokující I/O operace jsou přijatelné (neblokují ostatní klienty)
+* Přirozená izolace mezi klienty (vlastní stack a lokální proměnné)
+* Vhodné pro desítky klientů (max 50 dle konfigurace serveru)
+* Žádná sdílená data mezi klienty – každá místnost bude izolovaná
+* Snadnější debugging – každý thread je nezávislý
 
-**Nevýhody vláken**
+**Implementace**
 
-* Nutnost locků a komplexnější kód
-* Riziko race conditions
-* Zbytečné pro tahovou hru
+* Hlavní thread běží v `server_run()` – nekonečná accept loop
+* Pro každého nového klienta:
+  * Vytvoří se `client_t` struktura (alokace dynamické paměti)
+  * Spustí se nový thread: `pthread_create(&tid, NULL, client_handler_thread, client)`
+  * Thread se detachuje: `pthread_detach(tid)` → automatický cleanup po ukončení
+* Logger používá mutex (`pthread_mutex_t`) pro thread-safe zápis
+* Místnosti budou mít vlastní synchronizační mechanismy (v budoucích verzích)
 
-**Architektura:**
+**Thread-safety**
 
-* Hlavní smyčka se `select()` a timeoutem 1 s
-* Reakce na nové spojení → `accept()`
-* Aktivita na client_fd → `read()` → `client_handle_message()`
-* Timeout → PING/PONG a detekce výpadků
+* Logger: `pthread_mutex_lock()` / `unlock()` kolem zápisů
+* Klienti: žádná sdílená data (každý má vlastní `client_t`)
+* Místnosti: budou mít vlastní mutex pro přístup k hernímu stavu
 
 ---
 
@@ -224,8 +236,12 @@ Hlavní kontext běhu serveru – fd_set, seznam klientů a místností, číta�
 
 #### 5.1 Hlavní smyčka serveru
 
-Sekvenční postup od `server_init()` po `server_shutdown()`
-Zahrnuje select(), accept(), zpracování zpráv, PING/PONG a timeouty.
+Sekvenční postup od `server_init()` po `server_shutdown()`:
+1. `server_init()` – vytvoření socketu, bind, listen
+2. `server_run()` – nekonečná smyčka s `accept()`
+3. Pro každého klienta → `pthread_create()` → `client_handler_thread()`
+4. Signal (SIGINT/SIGTERM) → `server_config.running = 0` → ukončení loop
+5. `server_shutdown()` – uzavření listening socketu
 
 #### 5.2 Zpracování příkazu `FLIP`
 
@@ -350,24 +366,41 @@ client/
 
 ```make
 CC = gcc
-CFLAGS = -Wall -Wextra -pthread -g
+CFLAGS = -Wall -Wextra -pthread -g -std=c99
 LDFLAGS = -pthread
 
-SOURCES = main.c server.c client_handler.c room.c game.c protocol.c logger.c config.c
+# Aktuálně implementované soubory
+SOURCES = main.c server.c client_handler.c logger.c
+# V budoucnu: + room.c game.c protocol.c config.c
 OBJECTS = $(SOURCES:.c=.o)
-TARGET  = pexeso_server
+TARGET  = server
 
 all: $(TARGET)
+
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
+	@echo "Build successful: $(TARGET)"
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(TARGET) server.log
+	@echo "Clean complete"
 
-.PHONY: all clean
+run: $(TARGET)
+	./$(TARGET) 127.0.0.1 10000 10 50
+
+valgrind: $(TARGET)
+	valgrind --leak-check=full --show-leak-kinds=all ./$(TARGET) 127.0.0.1 10000 10 50
+
+# Dependencies
+main.o: main.c server.h logger.h
+server.o: server.c server.h client_handler.h logger.h protocol.h
+client_handler.o: client_handler.c client_handler.h logger.h protocol.h
+logger.o: logger.c logger.h
+
+.PHONY: all clean run valgrind
 ```
 
 ### 6. Maven / Gradle (klient)
@@ -382,10 +415,11 @@ clean:
 
 ### Architektura Serveru (C)
 
-* Single-threaded (`select()` loop)
-* Modularita (8 souborů)
-* Datové struktury `client_t`, `room_t`, `game_t`
-* Logování a PING/PONG keepalive
+* Multi-threaded (POSIX threads, thread-per-client)
+* Modularita (8 modulů plánováno, 5 implementováno)
+* Datové struktury `client_t`, `server_config_t`, (+ `room_t`, `game_t` v budoucnu)
+* Thread-safe logování s mutex
+* Robustní zpracování fragmentovaných zpráv
 
 ### Architektura Klienta (JavaFX)
 
@@ -397,11 +431,13 @@ clean:
 ### Klíčové vlastnosti
 
 ✅ Modularita a čitelnost
-✅ Bezpečná paralelizace (select)
-✅ Validace všech vstupů
+✅ Bezpečná paralelizace (POSIX threads)
+✅ Thread-safe operace (mutex v loggeru)
+✅ Validace všech vstupů (plánováno)
 ✅ Robustní error handling
-✅ Reconnect mechanismus
+✅ Reconnect mechanismus (plánováno)
 ✅ Logování a debugging
+✅ Zpracování fragmentovaných zpráv (testováno s InTCPtor)
 
 ---
 

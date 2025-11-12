@@ -1,5 +1,6 @@
 package cz.zcu.kiv.ups.pexeso;
 
+import cz.zcu.kiv.ups.pexeso.controller.LoginController;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
@@ -17,13 +18,17 @@ public class Main extends Application {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/LoginView.fxml"));
         Parent root = loader.load();
 
+        // Get controller and set stage
+        LoginController controller = loader.getController();
+        controller.setStage(primaryStage);
+
         // Setup scene
         Scene scene = new Scene(root, 600, 500);
 
         // Setup stage
         primaryStage.setTitle("Pexeso Client - Login");
         primaryStage.setScene(scene);
-        primaryStage.setResizable(false);
+        primaryStage.setResizable(true);
         primaryStage.show();
 
         // Handle application close

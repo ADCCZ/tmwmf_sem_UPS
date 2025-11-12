@@ -56,8 +56,8 @@ public class ProtocolConstants {
     public static final int MAX_NICK_LENGTH = 32;
 
     // Timeouts
-    public static final int CONNECTION_TIMEOUT_MS = 5000;
-    public static final int READ_TIMEOUT_MS = 30000;
+    public static final int CONNECTION_TIMEOUT_MS = 5000;      // 5 seconds to connect
+    public static final int READ_TIMEOUT_MS = 120000;          // 2 minutes read timeout
     public static final int RECONNECT_INTERVAL_MS = 2000;
     public static final int MAX_RECONNECT_ATTEMPTS = 5;
 

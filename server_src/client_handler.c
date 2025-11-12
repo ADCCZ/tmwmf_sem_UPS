@@ -447,7 +447,7 @@ static void handle_flip(client_t *client, const char *params) {
                 // Clean up game
                 game_destroy(game);
                 room->game = NULL;
-                room->state = ROOM_STATE_WAITING;
+                room->state = ROOM_STATE_FINISHED;
             } else {
                 // Same player continues, send YOUR_TURN
                 client_send_message(client, "YOUR_TURN");

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns="http://javafx.com/javafx"
+      xmlns:fx="http://javafx.com/fxml"
+      fx:controller="cz.zcu.kiv.ups.pexeso.controller.LobbyController"
+      spacing="10" style="-fx-padding: 20;">
+
+    <!-- Header -->
+    <HBox alignment="CENTER_LEFT" spacing="10">
+        <Label text="Pexeso Lobby" style="-fx-font-size: 24px; -fx-font-weight: bold;"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Label fx:id="nicknameLabel" text="Logged in as: "/>
+    </HBox>
+
+    <Separator/>
+
+    <!-- Room List -->
+    <Label text="Available Rooms:" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+
+    <ListView fx:id="roomListView" VBox.vgrow="ALWAYS">
+        <VBox.margin>
+            <Insets bottom="10"/>
+        </VBox.margin>
+    </ListView>
+
+    <!-- Buttons -->
+    <HBox spacing="10" alignment="CENTER">
+        <Button fx:id="refreshButton" text="Refresh" onAction="#handleRefresh"
+                prefWidth="100"/>
+        <Button fx:id="createRoomButton" text="Create Room" onAction="#handleCreateRoom"
+                prefWidth="120" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
+        <Button fx:id="joinRoomButton" text="Join Room" onAction="#handleJoinRoom"
+                prefWidth="120" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
+    </HBox>
+
+    <!-- Status -->
+    <Separator/>
+    <Label fx:id="statusLabel" text="Ready" style="-fx-font-style: italic;"/>
+</VBox>

@@ -5,9 +5,13 @@ import cz.zcu.kiv.ups.pexeso.network.MessageListener;
 import cz.zcu.kiv.ups.pexeso.protocol.ProtocolConstants;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
+import javafx.fxml.FXMLLoader;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.stage.Stage;
 
 import java.io.IOException;
 import java.time.LocalTime;
@@ -36,6 +40,8 @@ public class LoginController implements MessageListener {
     private ClientConnection connection;
     private boolean connected = false;
     private DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss");
+    private Stage stage;
+    private String authenticatedNickname;
 
     /**
      * Initialize the controller (called by JavaFX)
@@ -51,6 +57,13 @@ public class LoginController implements MessageListener {
         connection = new ClientConnection(this);
 
         log("Client initialized. Ready to connect.");
+    }
+
+    /**
+     * Set the stage for scene switching
+     */
+    public void setStage(Stage stage) {
+        this.stage = stage;
     }
 
     /**
@@ -109,6 +122,9 @@ public class LoginController implements MessageListener {
         // Disable input fields during connection
         setInputsEnabled(false);
         log("Connecting to " + ip + ":" + port + "...");
+
+        // Save nickname for later use
+        authenticatedNickname = nickname;
 
         // Connect in background thread to avoid blocking UI
         new Thread(() -> {
@@ -171,6 +187,8 @@ public class LoginController implements MessageListener {
         // Parse basic responses
         if (message.startsWith(ProtocolConstants.CMD_WELCOME)) {
             log("Successfully authenticated!");
+            // Switch to lobby view
+            switchToLobby();
         } else if (message.startsWith(ProtocolConstants.CMD_ERROR)) {
             log("Server error: " + message);
         } else if (message.startsWith(ProtocolConstants.CMD_PING)) {
@@ -178,6 +196,31 @@ public class LoginController implements MessageListener {
             connection.sendMessage(ProtocolConstants.CMD_PONG);
             log("Sent: " + ProtocolConstants.CMD_PONG);
         }
+    }
+
+    /**
+     * Switch to lobby view after successful authentication
+     */
+    private void switchToLobby() {
+        Platform.runLater(() -> {
+            try {
+                FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/LobbyView.fxml"));
+                Parent root = loader.load();
+
+                LobbyController lobbyController = loader.getController();
+                lobbyController.setConnection(connection, authenticatedNickname);
+                lobbyController.setStage(stage);
+
+                Scene scene = new Scene(root, 800, 600);
+                stage.setScene(scene);
+                stage.setTitle("Pexeso - Lobby");
+
+                log("Switched to lobby");
+            } catch (IOException e) {
+                e.printStackTrace();
+                log("ERROR: Failed to load lobby view: " + e.getMessage());
+            }
+        });
     }
 
     @Override

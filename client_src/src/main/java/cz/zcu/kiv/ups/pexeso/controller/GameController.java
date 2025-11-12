@@ -1,0 +1,526 @@
+package cz.zcu.kiv.ups.pexeso.controller;
+
+import cz.zcu.kiv.ups.pexeso.network.ClientConnection;
+import cz.zcu.kiv.ups.pexeso.network.MessageListener;
+import javafx.application.Platform;
+import javafx.fxml.FXML;
+import javafx.fxml.FXMLLoader;
+import javafx.geometry.Pos;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
+
+import java.io.IOException;
+import java.util.*;
+
+/**
+ * Controller for the game view
+ */
+public class GameController implements MessageListener {
+
+    @FXML
+    private Label roomNameLabel;
+
+    @FXML
+    private Label statusLabel;
+
+    @FXML
+    private Label turnLabel;
+
+    @FXML
+    private VBox playersVBox;
+
+    @FXML
+    private GridPane cardGrid;
+
+    @FXML
+    private Button startGameButton;
+
+    @FXML
+    private Button readyButton;
+
+    @FXML
+    private Button leaveRoomButton;
+
+    private ClientConnection connection;
+    private String nickname;
+    private int roomId;
+    private String roomName;
+    private boolean isOwner;
+    private Stage stage;
+
+    // Game state
+    private int boardSize = 0;
+    private Button[] cardButtons;
+    private boolean[] cardMatched;
+    private int[] cardValues;
+    private boolean myTurn = false;
+    private int flippedThisTurn = 0;
+    private List<Integer> flippedIndices = new ArrayList<>();
+
+    private Map<String, Integer> playerScores = new LinkedHashMap<>();
+    private List<String> players = new ArrayList<>();
+    private boolean gameStarted = false;
+    private boolean isReady = false;
+
+    public void initialize() {
+        // Initially hide game controls
+        startGameButton.setVisible(false);
+        readyButton.setVisible(false);
+        cardGrid.setVisible(false);
+    }
+
+    public void setConnection(ClientConnection connection, String nickname) {
+        this.connection = connection;
+        this.nickname = nickname;
+        this.connection.setMessageListener(this);
+    }
+
+    public void setRoomInfo(int roomId, String roomName, boolean isOwner) {
+        this.roomId = roomId;
+        this.roomName = roomName;
+        this.isOwner = isOwner;
+
+        roomNameLabel.setText("Room: " + roomName);
+        startGameButton.setVisible(isOwner);
+
+        updateStatus("Waiting for players...");
+    }
+
+    public void setStage(Stage stage) {
+        this.stage = stage;
+    }
+
+    @FXML
+    private void handleStartGame() {
+        if (!isOwner) return;
+
+        connection.sendMessage("START_GAME");
+        updateStatus("Creating game...");
+        startGameButton.setDisable(true);
+    }
+
+    @FXML
+    private void handleReady() {
+        if (isReady) return;
+
+        connection.sendMessage("READY");
+        readyButton.setDisable(true);
+        isReady = true;
+        updateStatus("Ready! Waiting for others...");
+    }
+
+    @FXML
+    private void handleLeaveRoom() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Leave Room");
+        confirm.setHeaderText("Are you sure you want to leave?");
+        confirm.setContentText("The game will end if you leave.");
+
+        Optional<ButtonType> result = confirm.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            connection.sendMessage("LEAVE_ROOM");
+        }
+    }
+
+    private void updateStatus(String message) {
+        Platform.runLater(() -> statusLabel.setText(message));
+    }
+
+    private void updateTurnLabel(String player) {
+        Platform.runLater(() -> {
+            if (player.equals(nickname)) {
+                turnLabel.setText("YOUR TURN!");
+                turnLabel.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: green;");
+                myTurn = true;
+            } else {
+                turnLabel.setText("Turn: " + player);
+                turnLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: black;");
+                myTurn = false;
+            }
+        });
+    }
+
+    private void updatePlayers() {
+        Platform.runLater(() -> {
+            playersVBox.getChildren().clear();
+
+            Label title = new Label("Players:");
+            title.setStyle("-fx-font-weight: bold;");
+            playersVBox.getChildren().add(title);
+
+            for (String player : players) {
+                Integer score = playerScores.getOrDefault(player, 0);
+                Label playerLabel = new Label(String.format("%s: %d", player, score));
+
+                if (player.equals(nickname)) {
+                    playerLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: blue;");
+                }
+
+                playersVBox.getChildren().add(playerLabel);
+            }
+        });
+    }
+
+    private void initializeBoard(int size) {
+        this.boardSize = size;
+        int totalCards = size * size;
+        cardButtons = new Button[totalCards];
+        cardMatched = new boolean[totalCards];
+        cardValues = new int[totalCards];
+        Arrays.fill(cardMatched, false);
+        Arrays.fill(cardValues, -1);
+
+        Platform.runLater(() -> {
+            cardGrid.getChildren().clear();
+            cardGrid.setVisible(true);
+            cardGrid.setHgap(5);
+            cardGrid.setVgap(5);
+            cardGrid.setAlignment(Pos.CENTER);
+
+            for (int i = 0; i < totalCards; i++) {
+                final int index = i;
+                Button btn = new Button("?");
+                btn.setPrefSize(80, 80);
+                btn.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
+                btn.setOnAction(e -> handleCardClick(index));
+
+                cardButtons[i] = btn;
+                cardGrid.add(btn, i % size, i / size);
+            }
+        });
+    }
+
+    private void handleCardClick(int index) {
+        if (!myTurn) {
+            showAlert("Not your turn!");
+            return;
+        }
+
+        if (cardMatched[index]) {
+            showAlert("Card already matched!");
+            return;
+        }
+
+        if (flippedIndices.contains(index)) {
+            showAlert("Card already flipped this turn!");
+            return;
+        }
+
+        if (flippedThisTurn >= 2) {
+            showAlert("Already flipped 2 cards!");
+            return;
+        }
+
+        // Send FLIP command
+        connection.sendMessage("FLIP " + index);
+    }
+
+    private void revealCard(int index, int value, String playerName) {
+        Platform.runLater(() -> {
+            if (index < 0 || index >= cardButtons.length) return;
+
+            cardValues[index] = value;
+            cardButtons[index].setText(String.valueOf(value));
+            cardButtons[index].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
+                                        "-fx-background-color: #FFC107;");
+
+            flippedIndices.add(index);
+            flippedThisTurn++;
+        });
+    }
+
+    private void handleMatch(String playerName, int score) {
+        Platform.runLater(() -> {
+            // Mark cards as matched
+            for (int index : flippedIndices) {
+                cardMatched[index] = true;
+                cardButtons[index].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
+                                           "-fx-background-color: #4CAF50; -fx-text-fill: white;");
+                cardButtons[index].setDisable(true);
+            }
+
+            // Update score
+            playerScores.put(playerName, score);
+            updatePlayers();
+
+            // Reset flip state
+            flippedIndices.clear();
+            flippedThisTurn = 0;
+
+            updateStatus(playerName + " found a match!");
+        });
+    }
+
+    private void handleMismatch() {
+        Platform.runLater(() -> {
+            // Clear turn state immediately
+            myTurn = false;
+            turnLabel.setText("Waiting for other player...");
+            turnLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: gray;");
+
+            // Wait a bit, then hide cards
+            new Thread(() -> {
+                try {
+                    Thread.sleep(1000); // Show cards for 1 second
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+
+                Platform.runLater(() -> {
+                    for (int index : flippedIndices) {
+                        if (!cardMatched[index]) {
+                            cardButtons[index].setText("?");
+                            cardButtons[index].setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
+                        }
+                    }
+
+                    flippedIndices.clear();
+                    flippedThisTurn = 0;
+                });
+            }).start();
+
+            updateStatus("No match! Next player's turn.");
+        });
+    }
+
+    private void showAlert(String message) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("Info");
+            alert.setHeaderText(null);
+            alert.setContentText(message);
+            alert.show();
+        });
+    }
+
+    @Override
+    public void onMessageReceived(String message) {
+        String[] parts = message.split(" ");
+        String command = parts[0];
+
+        System.out.println("Game received: " + message);
+
+        switch (command) {
+            case "PLAYER_JOINED":
+                if (parts.length > 1) {
+                    String player = parts[1];
+                    updateStatus(player + " joined the room");
+                }
+                break;
+
+            case "PLAYER_LEFT":
+                if (parts.length > 1) {
+                    String player = parts[1];
+                    updateStatus(player + " left the room");
+                }
+                break;
+
+            case "GAME_CREATED":
+                // Format: GAME_CREATED <board_size> <message>
+                if (parts.length > 1) {
+                    try {
+                        boardSize = Integer.parseInt(parts[1]);
+                        Platform.runLater(() -> {
+                            readyButton.setVisible(true);
+                            startGameButton.setVisible(false);
+                        });
+                        updateStatus("Game created! Click READY when prepared.");
+                    } catch (NumberFormatException e) {
+                        e.printStackTrace();
+                    }
+                }
+                break;
+
+            case "PLAYER_READY":
+                if (parts.length > 1) {
+                    String player = parts[1];
+                    updateStatus(player + " is ready");
+                }
+                break;
+
+            case "GAME_START":
+                handleGameStart(message);
+                break;
+
+            case "YOUR_TURN":
+                updateTurnLabel(nickname);
+                updateStatus("Your turn! Click on a card.");
+                break;
+
+            case "CARD_REVEAL":
+                // Format: CARD_REVEAL <index> <value> <player>
+                if (parts.length >= 4) {
+                    try {
+                        int index = Integer.parseInt(parts[1]);
+                        int value = Integer.parseInt(parts[2]);
+                        String player = parts[3];
+                        revealCard(index, value, player);
+                    } catch (NumberFormatException e) {
+                        e.printStackTrace();
+                    }
+                }
+                break;
+
+            case "MATCH":
+                // Format: MATCH <player> <score>
+                if (parts.length >= 3) {
+                    String player = parts[1];
+                    int score = Integer.parseInt(parts[2]);
+                    handleMatch(player, score);
+                }
+                break;
+
+            case "MISMATCH":
+                handleMismatch();
+                break;
+
+            case "GAME_END":
+                handleGameEnd(message);
+                break;
+
+            case "LEFT_ROOM":
+                returnToLobby();
+                break;
+
+            case "ERROR":
+                String error = message.substring(6); // Remove "ERROR "
+                updateStatus("Error: " + error);
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("Error");
+                    alert.setHeaderText(null);
+                    alert.setContentText(error);
+                    alert.showAndWait();
+                });
+                break;
+        }
+    }
+
+    private void handleGameStart(String message) {
+        // Format: GAME_START <board_size> <player1> <player2> ...
+        String[] parts = message.split(" ");
+        if (parts.length < 3) return;
+
+        try {
+            int size = Integer.parseInt(parts[1]);
+
+            players.clear();
+            playerScores.clear();
+
+            for (int i = 2; i < parts.length; i++) {
+                String player = parts[i];
+                players.add(player);
+                playerScores.put(player, 0);
+            }
+
+            initializeBoard(size);
+            updatePlayers();
+
+            gameStarted = true;
+            updateStatus("Game started! Waiting for first turn...");
+
+            Platform.runLater(() -> {
+                readyButton.setVisible(false);
+            });
+
+        } catch (NumberFormatException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void handleGameEnd(String message) {
+        // Format: GAME_END <player1> <score1> <player2> <score2> ...
+        String[] parts = message.split(" ");
+
+        StringBuilder resultMsg = new StringBuilder("Game Over!\n\nFinal Scores:\n");
+        int maxScore = -1;
+        List<String> winners = new ArrayList<>();
+
+        for (int i = 1; i < parts.length; i += 2) {
+            if (i + 1 < parts.length) {
+                String player = parts[i];
+                int score = Integer.parseInt(parts[i + 1]);
+
+                resultMsg.append(String.format("%s: %d\n", player, score));
+
+                if (score > maxScore) {
+                    maxScore = score;
+                    winners.clear();
+                    winners.add(player);
+                } else if (score == maxScore) {
+                    winners.add(player);
+                }
+            }
+        }
+
+        resultMsg.append("\nWinner(s): ");
+        resultMsg.append(String.join(", ", winners));
+
+        String finalMsg = resultMsg.toString();
+
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("Game Over");
+            alert.setHeaderText(null);
+            alert.setContentText(finalMsg);
+            alert.showAndWait();
+
+            // Ask if player wants to return to lobby
+            Alert lobbyAlert = new Alert(Alert.AlertType.CONFIRMATION);
+            lobbyAlert.setTitle("Return to Lobby");
+            lobbyAlert.setHeaderText("Game finished!");
+            lobbyAlert.setContentText("Return to lobby?");
+
+            Optional<ButtonType> result = lobbyAlert.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                returnToLobby();
+            }
+        });
+    }
+
+    private void returnToLobby() {
+        Platform.runLater(() -> {
+            try {
+                FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/LobbyView.fxml"));
+                Parent root = loader.load();
+
+                LobbyController lobbyController = loader.getController();
+                lobbyController.setConnection(connection, nickname);
+                lobbyController.setStage(stage);
+
+                Scene scene = new Scene(root, 800, 600);
+                stage.setScene(scene);
+                stage.setTitle("Pexeso - Lobby");
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
+    @Override
+    public void onConnected() {
+        // Already connected
+    }
+
+    @Override
+    public void onDisconnected(String reason) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("Disconnected");
+            alert.setHeaderText("Lost connection to server");
+            alert.setContentText(reason);
+            alert.showAndWait();
+
+            System.exit(0);
+        });
+    }
+
+    @Override
+    public void onError(String error) {
+        updateStatus("Error: " + error);
+    }
+}

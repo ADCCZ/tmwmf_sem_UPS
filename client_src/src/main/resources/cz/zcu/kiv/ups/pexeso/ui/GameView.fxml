@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="cz.zcu.kiv.ups.pexeso.controller.GameController"
+            style="-fx-padding: 20;">
+
+    <!-- Top: Room Info and Controls -->
+    <top>
+        <VBox spacing="10">
+            <HBox alignment="CENTER_LEFT" spacing="10">
+                <Label fx:id="roomNameLabel" text="Room: "
+                       style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="leaveRoomButton" text="Leave Room" onAction="#handleLeaveRoom"
+                        style="-fx-background-color: #f44336; -fx-text-fill: white;"/>
+            </HBox>
+
+            <HBox spacing="10" alignment="CENTER">
+                <Button fx:id="startGameButton" text="Start Game" onAction="#handleStartGame"
+                        prefWidth="150" style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 14px;"/>
+                <Button fx:id="readyButton" text="READY" onAction="#handleReady"
+                        prefWidth="150" style="-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-size: 14px;"/>
+            </HBox>
+
+            <Separator/>
+
+            <Label fx:id="turnLabel" text="Waiting for game to start..."
+                   style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+
+            <Label fx:id="statusLabel" text="Status"
+                   style="-fx-font-style: italic;"/>
+
+            <Separator/>
+        </VBox>
+    </top>
+
+    <!-- Center: Game Board -->
+    <center>
+        <GridPane fx:id="cardGrid" alignment="CENTER" hgap="5" vgap="5">
+            <BorderPane.margin>
+                <Insets top="20" bottom="20"/>
+            </BorderPane.margin>
+        </GridPane>
+    </center>
+
+    <!-- Right: Players and Scores -->
+    <right>
+        <VBox fx:id="playersVBox" spacing="10" style="-fx-padding: 20; -fx-border-color: #ccc; -fx-border-width: 1;">
+            <Label text="Players:" style="-fx-font-weight: bold;"/>
+        </VBox>
+    </right>
+
+</BorderPane>

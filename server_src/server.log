@@ -1,81 +1,180 @@
-[2025-11-12 12:01:53] [INFO] Logger initialized
-[2025-11-12 12:01:53] [INFO] === Pexeso Server Starting ===
-[2025-11-12 12:01:53] [INFO] Configuration: IP=127.0.0.1, Port=10000, MaxRooms=10, MaxClients=50
-[2025-11-12 12:01:53] [INFO] Room system initialized (max_rooms=10)
-[2025-11-12 12:01:53] [INFO] Server initialized: 127.0.0.1:10000 (max_rooms=10, max_clients=50)
-[2025-11-12 12:01:53] [INFO] Server started, waiting for connections...
-[2025-11-12 12:02:11] [INFO] New connection from 127.0.0.1:44570 (fd=5)
-[2025-11-12 12:02:11] [INFO] Client 1: Thread created successfully
-[2025-11-12 12:02:11] [INFO] Client 1: Handler thread started (fd=5)
-[2025-11-12 12:02:28] [INFO] Client 1: Received message: 'HELLO Alice'
-[2025-11-12 12:02:28] [INFO] Client 1 authenticated as 'Alice'
-[2025-11-12 12:02:41] [INFO] Client 1: Received message: 'LIST_ROOMS'
-[2025-11-12 12:02:41] [INFO] Client 1 (Alice) requested room list
-[2025-11-12 12:03:09] [INFO] Client 1: Received message: 'CREATE_ROOM TestRoom 4'
-[2025-11-12 12:03:09] [INFO] Room created: id=1, name='TestRoom', max_players=4, owner=Alice
-[2025-11-12 12:03:09] [INFO] Client 1 (Alice) created room 1
-[2025-11-12 12:03:29] [INFO] Client 1: Received message: 'LIST_ROOMS'
-[2025-11-12 12:03:29] [INFO] Client 1 (Alice) requested room list
-[2025-11-12 12:03:54] [INFO] New connection from 127.0.0.1:44608 (fd=6)
-[2025-11-12 12:03:54] [INFO] Client 2: Thread created successfully
-[2025-11-12 12:03:54] [INFO] Client 2: Handler thread started (fd=6)
-[2025-11-12 12:04:21] [INFO] Client 2: Received message: 'HELLO Bob'
-[2025-11-12 12:04:21] [INFO] Client 2 authenticated as 'Bob'
-[2025-11-12 12:04:30] [INFO] Client 2: Received message: 'LIST_ROOMS'
-[2025-11-12 12:04:30] [INFO] Client 2 (Bob) requested room list
-[2025-11-12 12:04:53] [INFO] Client 2: Received message: 'JOIN_ROOM 1'
-[2025-11-12 12:04:53] [INFO] Client 2 (Bob) joined room 1
-[2025-11-12 12:04:53] [INFO] Client 2 (Bob) joined room 1
-[2025-11-12 12:05:26] [INFO] Client 2: Received message: '  LEAVE_ROOM'
-[2025-11-12 12:05:26] [WARN] Client 2: Unknown command: 
-[2025-11-12 12:05:33] [INFO] Client 2: Received message: 'LEAVE_ROOM'
-[2025-11-12 12:05:33] [INFO] Client 2 (Bob) left room 1
-[2025-11-12 12:05:33] [INFO] Client 2 (Bob) left room 1
-[2025-11-12 12:05:59] [INFO] Client 2: Received message: 'JOIN_ROOM 123'
-[2025-11-12 12:06:10] [INFO] Client 2: Received message: 'LEAVE_ROOM'
-[2025-11-12 12:06:26] [INFO] Client 2: Received message: 'CREATE_ROOM BadRoom 10'
-[2025-11-12 12:08:36] [INFO] Client 2: Connection closed by client
-[2025-11-12 12:08:36] [INFO] Client 2: Closing connection
-[2025-11-12 12:08:38] [INFO] Client 1: Connection closed by client
-[2025-11-12 12:08:38] [INFO] Client 1: Removing from room 1
-[2025-11-12 12:08:38] [INFO] Client 1 (Alice) left room 1
-[2025-11-12 12:08:38] [INFO] Room 1 is empty, destroying
-[2025-11-12 12:08:38] [INFO] Client 1: Closing connection
-[2025-11-12 12:09:23] [INFO] Received signal 2, shutting down...
-[2025-11-12 12:09:23] [INFO] Server stopped accepting connections
-[2025-11-12 12:09:23] [INFO] Server shutting down...
-[2025-11-12 12:09:23] [INFO] Room system shutdown
-[2025-11-12 12:09:23] [INFO] Server shutdown complete
-[2025-11-12 12:19:31] [INFO] Logger initialized
-[2025-11-12 12:19:31] [INFO] === Pexeso Server Starting ===
-[2025-11-12 12:19:31] [INFO] Configuration: IP=0.0.0.0, Port=10000, MaxRooms=10, MaxClients=50
-[2025-11-12 12:19:31] [INFO] Room system initialized (max_rooms=10)
-[2025-11-12 12:19:31] [INFO] Server initialized: 0.0.0.0:10000 (max_rooms=10, max_clients=50)
-[2025-11-12 12:19:31] [INFO] Server started, waiting for connections...
-[2025-11-12 12:25:24] [INFO] New connection from 172.30.176.1:52096 (fd=5)
-[2025-11-12 12:25:24] [INFO] Client 1: Thread created successfully
-[2025-11-12 12:25:24] [INFO] Client 1: Handler thread started (fd=5)
-[2025-11-12 12:25:42] [INFO] Client 1: Received message: 'HELLO TestLocal'
-[2025-11-12 12:25:42] [INFO] Client 1 authenticated as 'TestLocal'
-[2025-11-12 12:27:18] [INFO] New connection from 172.30.176.1:63819 (fd=6)
-[2025-11-12 12:27:18] [INFO] Client 2: Thread created successfully
-[2025-11-12 12:27:18] [INFO] Client 2: Handler thread started (fd=6)
-[2025-11-12 12:27:21] [INFO] Client 2: Received message: 'haha'
-[2025-11-12 12:27:21] [WARN] Client 2: Unknown command: haha
-[2025-11-12 12:27:34] [INFO] Client 2: Received message: 'HELLO DAVID'
-[2025-11-12 12:27:34] [INFO] Client 2 authenticated as 'DAVID'
-[2025-11-12 12:27:47] [INFO] Client 2: Received message: 'LIST_ROOMS'
-[2025-11-12 12:27:47] [INFO] Client 2 (DAVID) requested room list
-[2025-11-12 12:28:18] [INFO] Client 2: Received message: 'CREATE_ROOM lool 3'
-[2025-11-12 12:28:18] [INFO] Room created: id=1, name='lool', max_players=3, owner=DAVID
-[2025-11-12 12:28:18] [INFO] Client 2 (DAVID) created room 1
-[2025-11-12 12:28:31] [INFO] Client 2: Connection closed by client
-[2025-11-12 12:28:31] [INFO] Client 2: Removing from room 1
-[2025-11-12 12:28:31] [INFO] Client 2 (DAVID) left room 1
-[2025-11-12 12:28:31] [INFO] Room 1 is empty, destroying
-[2025-11-12 12:28:31] [INFO] Client 2: Closing connection
-[2025-11-12 12:43:22] [INFO] Received signal 2, shutting down...
-[2025-11-12 12:43:22] [INFO] Server stopped accepting connections
-[2025-11-12 12:43:22] [INFO] Server shutting down...
-[2025-11-12 12:43:22] [INFO] Room system shutdown
-[2025-11-12 12:43:22] [INFO] Server shutdown complete
+[2025-11-12 17:58:26] [INFO] Logger initialized
+[2025-11-12 17:58:26] [INFO] === Pexeso Server Starting ===
+[2025-11-12 17:58:26] [INFO] Configuration: IP=127.0.0.1, Port=10000, MaxRooms=10, MaxClients=50
+[2025-11-12 17:58:26] [INFO] Room system initialized (max_rooms=10)
+[2025-11-12 17:58:26] [INFO] Server initialized: 127.0.0.1:10000 (max_rooms=10, max_clients=50)
+[2025-11-12 17:58:26] [INFO] Server started, waiting for connections...
+[2025-11-12 17:59:25] [INFO] New connection from 127.0.0.1:53172 (fd=5)
+[2025-11-12 17:59:25] [INFO] Client 1: Thread created successfully
+[2025-11-12 17:59:25] [INFO] Client 1: Handler thread started (fd=5)
+[2025-11-12 17:59:25] [INFO] Client 1: Received message: 'HELLO Olda'
+[2025-11-12 17:59:25] [INFO] Client 1 authenticated as 'Olda'
+[2025-11-12 17:59:25] [INFO] Client 1: Received message: 'LIST_ROOMS'
+[2025-11-12 17:59:25] [INFO] Client 1 (Olda) requested room list
+[2025-11-12 17:59:57] [INFO] New connection from 127.0.0.1:45686 (fd=6)
+[2025-11-12 17:59:57] [INFO] Client 2: Thread created successfully
+[2025-11-12 17:59:57] [INFO] Client 2: Handler thread started (fd=6)
+[2025-11-12 17:59:57] [INFO] Client 2: Received message: 'HELLO Oldick'
+[2025-11-12 17:59:57] [INFO] Client 2 authenticated as 'Oldick'
+[2025-11-12 17:59:57] [INFO] Client 2: Received message: 'LIST_ROOMS'
+[2025-11-12 17:59:57] [INFO] Client 2 (Oldick) requested room list
+[2025-11-12 18:00:07] [INFO] Client 2: Received message: 'CREATE_ROOM MyRoom 2'
+[2025-11-12 18:00:07] [INFO] Room created: id=1, name='MyRoom', max_players=2, owner=Oldick
+[2025-11-12 18:00:07] [INFO] Client 2 (Oldick) created room 1
+[2025-11-12 18:00:15] [INFO] Client 1: Received message: 'LIST_ROOMS'
+[2025-11-12 18:00:15] [INFO] Client 1 (Olda) requested room list
+[2025-11-12 18:00:18] [INFO] Client 1: Received message: 'JOIN_ROOM 1'
+[2025-11-12 18:00:18] [INFO] Client 1 (Olda) joined room 1
+[2025-11-12 18:00:18] [INFO] Client 1 (Olda) joined room 1
+[2025-11-12 18:00:50] [INFO] Client 2: Received message: 'START_GAME'
+[2025-11-12 18:00:50] [INFO] Game created: board_size=4, total_cards=16, pairs=8, players=2
+[2025-11-12 18:00:50] [INFO] Room 1: Game created by Oldick (board_size=4, players=2)
+[2025-11-12 18:00:53] [INFO] Client 1: Received message: 'READY'
+[2025-11-12 18:00:53] [INFO] Player Olda marked as ready (2/2)
+[2025-11-12 18:00:53] [INFO] Client 1 (Olda) marked ready in room 1
+[2025-11-12 18:00:53] [INFO] Client 2: Received message: 'READY'
+[2025-11-12 18:00:53] [INFO] Player Oldick marked as ready (1/2)
+[2025-11-12 18:00:53] [INFO] Client 2 (Oldick) marked ready in room 1
+[2025-11-12 18:00:53] [INFO] All players ready in room 1, starting game
+[2025-11-12 18:00:53] [INFO] Game started, first player: Oldick
+[2025-11-12 18:00:53] [INFO] Room 1: First turn goes to Oldick
+[2025-11-12 18:00:57] [INFO] Client 2: Received message: 'FLIP 15'
+[2025-11-12 18:00:57] [INFO] Player Oldick flipped card 15 (value=4), flip 1/2
+[2025-11-12 18:00:57] [INFO] Room 1: Player Oldick flipped card 15 (value=4)
+[2025-11-12 18:01:01] [INFO] Client 2: Received message: 'FLIP 11'
+[2025-11-12 18:01:01] [INFO] Player Oldick flipped card 11 (value=4), flip 2/2
+[2025-11-12 18:01:01] [INFO] Room 1: Player Oldick flipped card 11 (value=4)
+[2025-11-12 18:01:01] [INFO] MATCH! Player Oldick matched cards 15 and 11 (value=4), score=1
+[2025-11-12 18:01:05] [INFO] Client 2: Received message: 'FLIP 10'
+[2025-11-12 18:01:05] [INFO] Player Oldick flipped card 10 (value=3), flip 1/2
+[2025-11-12 18:01:05] [INFO] Room 1: Player Oldick flipped card 10 (value=3)
+[2025-11-12 18:01:06] [INFO] Client 2: Received message: 'FLIP 4'
+[2025-11-12 18:01:06] [INFO] Player Oldick flipped card 4 (value=2), flip 2/2
+[2025-11-12 18:01:06] [INFO] Room 1: Player Oldick flipped card 4 (value=2)
+[2025-11-12 18:01:06] [INFO] MISMATCH! Player Oldick cards 10 (val=3) and 4 (val=2)
+[2025-11-12 18:01:06] [INFO] Turn passed to player Olda
+[2025-11-12 18:01:06] [INFO] Room 1: Turn passed to Olda
+[2025-11-12 18:01:08] [INFO] Client 1: Received message: 'FLIP 4'
+[2025-11-12 18:01:08] [INFO] Player Olda flipped card 4 (value=2), flip 1/2
+[2025-11-12 18:01:08] [INFO] Room 1: Player Olda flipped card 4 (value=2)
+[2025-11-12 18:01:10] [INFO] Client 1: Received message: 'FLIP 8'
+[2025-11-12 18:01:10] [INFO] Player Olda flipped card 8 (value=7), flip 2/2
+[2025-11-12 18:01:10] [INFO] Room 1: Player Olda flipped card 8 (value=7)
+[2025-11-12 18:01:10] [INFO] MISMATCH! Player Olda cards 4 (val=2) and 8 (val=7)
+[2025-11-12 18:01:10] [INFO] Turn passed to player Oldick
+[2025-11-12 18:01:10] [INFO] Room 1: Turn passed to Oldick
+[2025-11-12 18:01:16] [INFO] Client 2: Received message: 'FLIP 7'
+[2025-11-12 18:01:16] [INFO] Player Oldick flipped card 7 (value=5), flip 1/2
+[2025-11-12 18:01:16] [INFO] Room 1: Player Oldick flipped card 7 (value=5)
+[2025-11-12 18:01:16] [INFO] Client 2: Received message: 'FLIP 3'
+[2025-11-12 18:01:16] [INFO] Player Oldick flipped card 3 (value=8), flip 2/2
+[2025-11-12 18:01:16] [INFO] Room 1: Player Oldick flipped card 3 (value=8)
+[2025-11-12 18:01:16] [INFO] MISMATCH! Player Oldick cards 7 (val=5) and 3 (val=8)
+[2025-11-12 18:01:16] [INFO] Turn passed to player Olda
+[2025-11-12 18:01:16] [INFO] Room 1: Turn passed to Olda
+[2025-11-12 18:01:19] [INFO] Client 1: Received message: 'FLIP 1'
+[2025-11-12 18:01:19] [INFO] Player Olda flipped card 1 (value=6), flip 1/2
+[2025-11-12 18:01:19] [INFO] Room 1: Player Olda flipped card 1 (value=6)
+[2025-11-12 18:01:20] [INFO] Client 1: Received message: 'FLIP 2'
+[2025-11-12 18:01:20] [INFO] Player Olda flipped card 2 (value=5), flip 2/2
+[2025-11-12 18:01:20] [INFO] Room 1: Player Olda flipped card 2 (value=5)
+[2025-11-12 18:01:20] [INFO] MISMATCH! Player Olda cards 1 (val=6) and 2 (val=5)
+[2025-11-12 18:01:20] [INFO] Turn passed to player Oldick
+[2025-11-12 18:01:20] [INFO] Room 1: Turn passed to Oldick
+[2025-11-12 18:01:24] [INFO] Client 2: Received message: 'FLIP 2'
+[2025-11-12 18:01:24] [INFO] Player Oldick flipped card 2 (value=5), flip 1/2
+[2025-11-12 18:01:24] [INFO] Room 1: Player Oldick flipped card 2 (value=5)
+[2025-11-12 18:01:24] [INFO] Client 2: Received message: 'FLIP 3'
+[2025-11-12 18:01:24] [INFO] Player Oldick flipped card 3 (value=8), flip 2/2
+[2025-11-12 18:01:24] [INFO] Room 1: Player Oldick flipped card 3 (value=8)
+[2025-11-12 18:01:24] [INFO] MISMATCH! Player Oldick cards 2 (val=5) and 3 (val=8)
+[2025-11-12 18:01:24] [INFO] Turn passed to player Olda
+[2025-11-12 18:01:24] [INFO] Room 1: Turn passed to Olda
+[2025-11-12 18:01:27] [INFO] Client 1: Received message: 'FLIP 6'
+[2025-11-12 18:01:27] [INFO] Player Olda flipped card 6 (value=7), flip 1/2
+[2025-11-12 18:01:27] [INFO] Room 1: Player Olda flipped card 6 (value=7)
+[2025-11-12 18:01:28] [INFO] Client 1: Received message: 'FLIP 12'
+[2025-11-12 18:01:28] [INFO] Player Olda flipped card 12 (value=1), flip 2/2
+[2025-11-12 18:01:28] [INFO] Room 1: Player Olda flipped card 12 (value=1)
+[2025-11-12 18:01:28] [INFO] MISMATCH! Player Olda cards 6 (val=7) and 12 (val=1)
+[2025-11-12 18:01:28] [INFO] Turn passed to player Oldick
+[2025-11-12 18:01:28] [INFO] Room 1: Turn passed to Oldick
+[2025-11-12 18:01:31] [INFO] Client 2: Received message: 'FLIP 12'
+[2025-11-12 18:01:31] [INFO] Player Oldick flipped card 12 (value=1), flip 1/2
+[2025-11-12 18:01:31] [INFO] Room 1: Player Oldick flipped card 12 (value=1)
+[2025-11-12 18:01:31] [INFO] Client 2: Received message: 'FLIP 8'
+[2025-11-12 18:01:31] [INFO] Player Oldick flipped card 8 (value=7), flip 2/2
+[2025-11-12 18:01:31] [INFO] Room 1: Player Oldick flipped card 8 (value=7)
+[2025-11-12 18:01:31] [INFO] MISMATCH! Player Oldick cards 12 (val=1) and 8 (val=7)
+[2025-11-12 18:01:31] [INFO] Turn passed to player Olda
+[2025-11-12 18:01:31] [INFO] Room 1: Turn passed to Olda
+[2025-11-12 18:01:35] [INFO] Client 1: Received message: 'FLIP 8'
+[2025-11-12 18:01:35] [INFO] Player Olda flipped card 8 (value=7), flip 1/2
+[2025-11-12 18:01:35] [INFO] Room 1: Player Olda flipped card 8 (value=7)
+[2025-11-12 18:01:35] [INFO] Client 1: Received message: 'FLIP 5'
+[2025-11-12 18:01:35] [INFO] Player Olda flipped card 5 (value=1), flip 2/2
+[2025-11-12 18:01:35] [INFO] Room 1: Player Olda flipped card 5 (value=1)
+[2025-11-12 18:01:35] [INFO] MISMATCH! Player Olda cards 8 (val=7) and 5 (val=1)
+[2025-11-12 18:01:35] [INFO] Turn passed to player Oldick
+[2025-11-12 18:01:35] [INFO] Room 1: Turn passed to Oldick
+[2025-11-12 18:01:37] [INFO] Client 2: Received message: 'FLIP 12'
+[2025-11-12 18:01:37] [INFO] Player Oldick flipped card 12 (value=1), flip 1/2
+[2025-11-12 18:01:37] [INFO] Room 1: Player Oldick flipped card 12 (value=1)
+[2025-11-12 18:01:38] [INFO] Client 2: Received message: 'FLIP 5'
+[2025-11-12 18:01:38] [INFO] Player Oldick flipped card 5 (value=1), flip 2/2
+[2025-11-12 18:01:38] [INFO] Room 1: Player Oldick flipped card 5 (value=1)
+[2025-11-12 18:01:38] [INFO] MATCH! Player Oldick matched cards 12 and 5 (value=1), score=2
+[2025-11-12 18:01:39] [INFO] Client 2: Received message: 'FLIP 3'
+[2025-11-12 18:01:39] [INFO] Player Oldick flipped card 3 (value=8), flip 1/2
+[2025-11-12 18:01:39] [INFO] Room 1: Player Oldick flipped card 3 (value=8)
+[2025-11-12 18:01:40] [INFO] Client 2: Received message: 'FLIP 2'
+[2025-11-12 18:01:40] [INFO] Player Oldick flipped card 2 (value=5), flip 2/2
+[2025-11-12 18:01:40] [INFO] Room 1: Player Oldick flipped card 2 (value=5)
+[2025-11-12 18:01:40] [INFO] MISMATCH! Player Oldick cards 3 (val=8) and 2 (val=5)
+[2025-11-12 18:01:40] [INFO] Turn passed to player Olda
+[2025-11-12 18:01:40] [INFO] Room 1: Turn passed to Olda
+[2025-11-12 18:01:42] [INFO] Client 1: Received message: 'FLIP 3'
+[2025-11-12 18:01:42] [INFO] Player Olda flipped card 3 (value=8), flip 1/2
+[2025-11-12 18:01:42] [INFO] Room 1: Player Olda flipped card 3 (value=8)
+[2025-11-12 18:01:42] [INFO] Client 1: Received message: 'FLIP 0'
+[2025-11-12 18:01:42] [INFO] Player Olda flipped card 0 (value=2), flip 2/2
+[2025-11-12 18:01:42] [INFO] Room 1: Player Olda flipped card 0 (value=2)
+[2025-11-12 18:01:42] [INFO] MISMATCH! Player Olda cards 3 (val=8) and 0 (val=2)
+[2025-11-12 18:01:42] [INFO] Turn passed to player Oldick
+[2025-11-12 18:01:42] [INFO] Room 1: Turn passed to Oldick
+[2025-11-12 18:01:48] [INFO] Client 1: Received message: 'LEAVE_ROOM'
+[2025-11-12 18:01:48] [INFO] Client 1 (Olda) left room 1
+[2025-11-12 18:01:48] [INFO] Client 1 (Olda) left room 1
+[2025-11-12 18:01:48] [INFO] Client 1: Received message: 'LIST_ROOMS'
+[2025-11-12 18:01:48] [INFO] Client 1 (Olda) requested room list
+[2025-11-12 18:01:51] [INFO] Client 2: Received message: 'FLIP 1'
+[2025-11-12 18:01:51] [INFO] Player Oldick flipped card 1 (value=6), flip 1/2
+[2025-11-12 18:01:51] [INFO] Room 1: Player Oldick flipped card 1 (value=6)
+[2025-11-12 18:01:52] [INFO] Client 2: Received message: 'FLIP 0'
+[2025-11-12 18:01:52] [INFO] Player Oldick flipped card 0 (value=2), flip 2/2
+[2025-11-12 18:01:52] [INFO] Room 1: Player Oldick flipped card 0 (value=2)
+[2025-11-12 18:01:52] [INFO] MISMATCH! Player Oldick cards 1 (val=6) and 0 (val=2)
+[2025-11-12 18:01:52] [INFO] Turn passed to player Olda
+[2025-11-12 18:01:52] [INFO] Room 1: Turn passed to Olda
+[2025-11-12 18:01:57] [INFO] Client 1: Received message: 'JOIN_ROOM 1'
+[2025-11-12 18:01:57] [INFO] Client 1 (Olda) joined room 1
+[2025-11-12 18:01:57] [INFO] Client 1 (Olda) joined room 1
+[2025-11-12 18:02:13] [INFO] Client 2: Received message: 'LEAVE_ROOM'
+[2025-11-12 18:02:13] [INFO] Client 2 (Oldick) left room 1
+[2025-11-12 18:02:13] [INFO] Client 2 (Oldick) left room 1
+[2025-11-12 18:02:13] [INFO] Client 2: Received message: 'LIST_ROOMS'
+[2025-11-12 18:02:13] [INFO] Client 2 (Oldick) requested room list
+[2025-11-12 18:02:16] [INFO] Client 1: Received message: 'LEAVE_ROOM'
+[2025-11-12 18:02:16] [INFO] Client 1 (Olda) left room 1
+[2025-11-12 18:02:16] [INFO] Room 1 is empty, destroying
+[2025-11-12 18:02:16] [INFO] Client 1 (Olda) left room 1
+[2025-11-12 18:02:16] [INFO] Client 1: Received message: 'LIST_ROOMS'
+[2025-11-12 18:02:16] [INFO] Client 1 (Olda) requested room list
+[2025-11-12 18:02:18] [INFO] Client 1: Received message: 'LIST_ROOMS'
+[2025-11-12 18:02:18] [INFO] Client 1 (Olda) requested room list
+[2025-11-12 18:02:19] [INFO] Client 2: Received message: 'LIST_ROOMS'
+[2025-11-12 18:02:19] [INFO] Client 2 (Oldick) requested room list
+[2025-11-12 18:02:27] [INFO] Client 2: Connection closed by client
+[2025-11-12 18:02:27] [INFO] Client 2: Closing connection
+[2025-11-12 18:02:29] [INFO] Client 1: Connection closed by client
+[2025-11-12 18:02:29] [INFO] Client 1: Closing connection

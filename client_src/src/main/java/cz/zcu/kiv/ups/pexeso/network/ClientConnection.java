@@ -187,6 +187,15 @@ public class ClientConnection {
     }
 
     /**
+     * Set message listener (for changing scenes)
+     *
+     * @param listener New message listener
+     */
+    public void setMessageListener(MessageListener listener) {
+        this.listener = listener;
+    }
+
+    /**
      * Get server host
      */
     public String getServerHost() {

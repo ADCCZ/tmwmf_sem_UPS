@@ -1,5 +1,4 @@
 #include "client_handler.h"
-#include "client_list.h"
 #include "room.h"
 #include "game.h"
 #include "logger.h"

@@ -47,8 +47,6 @@ public class GameController implements MessageListener {
 
     private ClientConnection connection;
     private String nickname;
-    private int roomId;
-    private String roomName;
     private boolean isOwner;
     private Stage stage;
 
@@ -65,6 +63,7 @@ public class GameController implements MessageListener {
     private List<String> players = new ArrayList<>();
     private boolean gameStarted = false;
     private boolean isReady = false;
+    private boolean reconnectionAlertShown = false;  // Track if reconnection alert was shown
 
     public void initialize() {
         // Initially hide game controls
@@ -80,8 +79,6 @@ public class GameController implements MessageListener {
     }
 
     public void setRoomInfo(int roomId, String roomName, boolean isOwner) {
-        this.roomId = roomId;
-        this.roomName = roomName;
         this.isOwner = isOwner;
 
         roomNameLabel.setText("Room: " + roomName);
@@ -114,11 +111,8 @@ public class GameController implements MessageListener {
             return;
         }
 
-        // Validate enough players
-        if (players.size() < 2) {
-            showAlert("Need at least 2 players to start!");
-            return;
-        }
+        // Let server validate player count - client's player list
+        // is not populated until game actually starts
 
         // Send with error checking
         boolean sent = connection.sendMessage("START_GAME");
@@ -333,12 +327,22 @@ public class GameController implements MessageListener {
         });
     }
 
-    private void handleMismatch() {
+    private void handleMismatch(String nextPlayer) {
         Platform.runLater(() -> {
-            // Clear turn state immediately
-            myTurn = false;
-            turnLabel.setText("Waiting for other player...");
-            turnLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: gray;");
+            // Update turn information
+            if (nextPlayer != null && !nextPlayer.isEmpty()) {
+                updateTurnLabel(nextPlayer);
+                if (nextPlayer.equals(nickname)) {
+                    updateStatus("No match! Your turn now.");
+                } else {
+                    updateStatus("No match! " + nextPlayer + "'s turn.");
+                }
+            } else {
+                myTurn = false;
+                turnLabel.setText("Waiting for other player...");
+                turnLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: gray;");
+                updateStatus("No match!");
+            }
 
             // Wait a bit, then hide cards
             new Thread(() -> {
@@ -360,8 +364,6 @@ public class GameController implements MessageListener {
                     flippedThisTurn = 0;
                 });
             }).start();
-
-            updateStatus("No match! Next player's turn.");
         });
     }
 
@@ -380,7 +382,10 @@ public class GameController implements MessageListener {
         String[] parts = message.split(" ");
         String command = parts[0];
 
-        System.out.println("Game received: " + message);
+        // Log all messages except PING (which has its own log)
+        if (!command.equals("PING")) {
+            System.out.println("Game received: " + message);
+        }
 
         switch (command) {
             case "PLAYER_JOINED":
@@ -394,6 +399,37 @@ public class GameController implements MessageListener {
                 if (parts.length > 1) {
                     String player = parts[1];
                     updateStatus(player + " left the room");
+                }
+                break;
+
+            case "PLAYER_DISCONNECTED":
+                // Format: PLAYER_DISCONNECTED <nickname> SHORT|LONG
+                if (parts.length >= 3) {
+                    String disconnectedPlayer = parts[1];
+                    String disconnectType = parts[2];
+                    handlePlayerDisconnected(disconnectedPlayer, disconnectType);
+                }
+                break;
+
+            case "PLAYER_RECONNECTED":
+                // Format: PLAYER_RECONNECTED <nickname>
+                if (parts.length >= 2) {
+                    String reconnectedPlayer = parts[1];
+                    updateStatus(reconnectedPlayer + " reconnected!");
+                    System.out.println("Player reconnected: " + reconnectedPlayer);
+                }
+                break;
+
+            case "ROOM_JOINED":
+                // Received after reconnect - we're back in the room
+                if (parts.length >= 3) {
+                    int reconnectRoomId = Integer.parseInt(parts[1]);
+                    String reconnectRoomName = parts[2];
+                    System.out.println("GameController: ROOM_JOINED after reconnect - room " + reconnectRoomId);
+                    updateStatus("Reconnected to room: " + reconnectRoomName);
+                    Platform.runLater(() -> {
+                        roomNameLabel.setText("Room: " + reconnectRoomName);
+                    });
                 }
                 break;
 
@@ -457,7 +493,9 @@ public class GameController implements MessageListener {
                 break;
 
             case "MISMATCH":
-                handleMismatch();
+                // Format: MISMATCH [next_player]
+                String nextPlayer = parts.length >= 2 ? parts[1] : null;
+                handleMismatch(nextPlayer);
                 break;
 
             case "GAME_END":
@@ -468,14 +506,26 @@ public class GameController implements MessageListener {
                 returnToLobby();
                 break;
 
+            case "PING":
+                // Respond to PING with PONG
+                connection.sendMessage("PONG");
+                System.out.println("Game: Received PING, sent PONG");
+                break;
+
             case "ERROR":
-                String error = message.substring(6); // Remove "ERROR "
-                updateStatus("Error: " + error);
+                String errorRaw = message.substring(6); // Remove "ERROR "
+                String userFriendlyError = formatErrorMessage(errorRaw);
+                updateStatus(userFriendlyError);
                 Platform.runLater(() -> {
+                    // Re-enable Start Game button if game hasn't started yet
+                    if (!gameStarted && isOwner) {
+                        startGameButton.setDisable(false);
+                    }
+
                     Alert alert = new Alert(Alert.AlertType.ERROR);
                     alert.setTitle("Error");
                     alert.setHeaderText(null);
-                    alert.setContentText(error);
+                    alert.setContentText(userFriendlyError);
                     alert.showAndWait();
                 });
                 break;
@@ -573,7 +623,16 @@ public class GameController implements MessageListener {
             updatePlayers();
 
             gameStarted = true;
-            updateStatus("Game started! Waiting for first turn...");
+
+            // First player in list always starts
+            String firstPlayer = players.get(0);
+            updateTurnLabel(firstPlayer);
+
+            if (firstPlayer.equals(nickname)) {
+                updateStatus("Game started! Your turn - click on a card.");
+            } else {
+                updateStatus("Game started! Waiting for " + firstPlayer + "'s turn...");
+            }
 
             Platform.runLater(() -> {
                 readyButton.setVisible(false);
@@ -636,6 +695,11 @@ public class GameController implements MessageListener {
 
     private void returnToLobby() {
         Platform.runLater(() -> {
+            if (stage == null) {
+                System.err.println("Cannot return to lobby: stage is null");
+                return;
+            }
+
             try {
                 FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/LobbyView.fxml"));
                 Parent root = loader.load();
@@ -655,11 +719,16 @@ public class GameController implements MessageListener {
 
     @Override
     public void onConnected() {
-        // Already connected
+        // Reset reconnection alert flag after successful reconnection
+        reconnectionAlertShown = false;
+        Platform.runLater(() -> updateStatus("Connected to server"));
     }
 
     @Override
     public void onDisconnected(String reason) {
+        // Reset reconnection alert flag
+        reconnectionAlertShown = false;
+
         Platform.runLater(() -> {
             Alert alert = new Alert(Alert.AlertType.ERROR);
             alert.setTitle("Disconnected");
@@ -667,12 +736,122 @@ public class GameController implements MessageListener {
             alert.setContentText(reason);
             alert.showAndWait();
 
-            System.exit(0);
+            // Return to login screen
+            returnToLoginScreen();
         });
+    }
+
+    private void returnToLoginScreen() {
+        if (stage == null) {
+            System.err.println("Cannot return to login: stage is null");
+            return;
+        }
+
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/LoginView.fxml"));
+            Parent root = loader.load();
+
+            // Pass stage to LoginController
+            LoginController loginController = loader.getController();
+            loginController.setStage(stage);
+
+            Scene scene = new Scene(root, 400, 300);
+            stage.setScene(scene);
+            stage.setTitle("Pexeso - Login");
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.err.println("Failed to load login view: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Handle player disconnection notification
+     */
+    private void handlePlayerDisconnected(String playerName, String disconnectType) {
+        // Don't show dialog for our own disconnect or empty player name
+        if (playerName == null || playerName.trim().isEmpty()) {
+            System.out.println("Ignoring disconnect notification with empty player name");
+            return;
+        }
+
+        if (playerName.equals(this.nickname)) {
+            System.out.println("Ignoring own disconnect notification");
+            return;
+        }
+
+        Platform.runLater(() -> {
+            if ("SHORT".equals(disconnectType)) {
+                updateStatus(playerName + " disconnected - waiting for reconnect (120s)");
+                // Show warning but don't remove player from list
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("Player Disconnected");
+                alert.setHeaderText(playerName + " lost connection");
+                alert.setContentText("Waiting up to 120 seconds for reconnection. Game is paused.");
+                alert.show(); // Non-blocking
+            } else if ("LONG".equals(disconnectType)) {
+                updateStatus(playerName + " disconnected permanently - game may end");
+                // Show error - player won't return
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle("Player Lost");
+                alert.setHeaderText(playerName + " disconnected permanently");
+                alert.setContentText("Player did not reconnect within timeout. Game may be ended.");
+                alert.show();
+            }
+        });
+        System.out.println("Player " + playerName + " disconnected (" + disconnectType + ")");
+    }
+
+    /**
+     * Format error message to be more user-friendly
+     * Removes error codes and provides clearer messages
+     */
+    private String formatErrorMessage(String rawError) {
+        // Split into error code and message
+        String[] parts = rawError.split(" ", 2);
+        String errorCode = parts[0];
+        String errorMessage = parts.length > 1 ? parts[1] : "";
+
+        // Map error codes to user-friendly messages
+        switch (errorCode) {
+            case "NEED_MORE_PLAYERS":
+                // Use server's message which includes exact player count
+                return errorMessage.isEmpty() ? "Need more players to start the game" : errorMessage;
+            case "NOT_ROOM_OWNER":
+                return "Only the room owner can start the game";
+            case "GAME_NOT_STARTED":
+                return "Game has not started yet";
+            case "NOT_YOUR_TURN":
+                return "It's not your turn";
+            case "INVALID_CARD":
+                return "Cannot flip that card";
+            case "INVALID_MOVE":
+                return errorMessage.isEmpty() ? "Invalid move" : errorMessage;
+            case "NOT_IN_ROOM":
+                return "You are not in a room";
+            case "ALREADY_IN_ROOM":
+                return "You are already in a room";
+            default:
+                // If we have a message, use it; otherwise use the code
+                return errorMessage.isEmpty() ? errorCode.replace("_", " ") : errorMessage;
+        }
     }
 
     @Override
     public void onError(String error) {
-        updateStatus("Error: " + error);
+        Platform.runLater(() -> {
+            updateStatus(error);
+
+            // Show alert ONLY for the first reconnection message
+            if (error.contains("Connection lost") && !reconnectionAlertShown) {
+                reconnectionAlertShown = true;
+
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("Connection Issue");
+                alert.setHeaderText("Connection Lost");
+                alert.setContentText("Connection to server was lost. Attempting to reconnect...");
+                alert.show();  // Non-blocking
+            }
+            // For subsequent reconnection messages, just update status (no alert)
+        });
     }
 }

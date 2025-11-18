@@ -310,6 +310,8 @@ client/
 
 * Obsluha GUI událostí a reagování na zprávy od serveru
 * Implementují rozhraní `MessageListener`
+* **Všechny kontrolery** (LoginController, LobbyController, GameController) musí zpracovávat PING zprávy a odpovídat PONG
+* Při odpojení (onDisconnected) se klient vrací na přihlašovací obrazovku
 
 ---
 

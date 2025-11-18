@@ -8,7 +8,7 @@
  */
 
 #define MIN_BOARD_SIZE 4    // 4x4 = 16 cards (8 pairs)
-#define MAX_BOARD_SIZE 6    // 6x6 = 36 cards (18 pairs)
+#define MAX_BOARD_SIZE 8    // 8x8 = 64 cards (32 pairs)
 #define MAX_PLAYERS_PER_ROOM 4  // Maximum players per game
 
 typedef enum {

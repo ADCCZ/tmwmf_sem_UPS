@@ -14,6 +14,8 @@
         <Label text="Pexeso Lobby" style="-fx-font-size: 24px; -fx-font-weight: bold;"/>
         <Region HBox.hgrow="ALWAYS"/>
         <Label fx:id="nicknameLabel" text="Logged in as: "/>
+        <Button fx:id="disconnectButton" text="Disconnect" onAction="#handleDisconnect"
+                style="-fx-background-color: #f44336; -fx-text-fill: white;"/>
     </HBox>
 
     <Separator/>

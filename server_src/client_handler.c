@@ -54,6 +54,12 @@ int client_send_message(client_t *client, const char *message) {
         return -1;
     }
 
+    // Don't send to disconnected clients
+    if (client->is_disconnected || client->socket_fd < 0) {
+        logger_log(LOG_WARNING, "Client %d: Cannot send message - client is disconnected", client->client_id);
+        return -1;
+    }
+
     char buffer[MAX_MESSAGE_LENGTH + 2];
     int len = snprintf(buffer, sizeof(buffer), "%s\n", message);
 
@@ -180,17 +186,18 @@ static void handle_create_room(client_t *client, const char *params) {
         return;
     }
 
-    // Parse parameters: <name> <max_players> [board_size]
+    // Parse parameters: <name> <max_players> <board_size>
     char room_name[MAX_ROOM_NAME_LENGTH];
     int max_players = 4;  // Default
+    int board_size = 4;   // Default
 
     if (params == NULL) {
         client_send_message(client, "ERROR INVALID_PARAMS Room name required");
         return;
     }
 
-    // Parse room name and max players
-    int parsed = sscanf(params, "%63s %d", room_name, &max_players);
+    // Parse room name, max players, and board size
+    int parsed = sscanf(params, "%63s %d %d", room_name, &max_players, &board_size);
     if (parsed < 1) {
         client_send_message(client, "ERROR INVALID_PARAMS Invalid format");
         return;
@@ -204,8 +211,14 @@ static void handle_create_room(client_t *client, const char *params) {
         return;
     }
 
+    // Validate board_size
+    if (board_size < 4 || board_size > 8 || board_size % 2 != 0) {
+        client_send_message(client, "ERROR INVALID_PARAMS Board size must be 4, 6, or 8");
+        return;
+    }
+
     // Create room
-    room_t *room = room_create(room_name, max_players, client);
+    room_t *room = room_create(room_name, max_players, board_size, client);
     if (room == NULL) {
         client_send_message(client, "ERROR ROOM_LIMIT Room limit reached");
         return;
@@ -368,15 +381,23 @@ static void handle_start_game(client_t *client) {
         return;
     }
 
-    // Need at least 2 players
-    if (room->player_count < 2) {
-        client_send_message(client, "ERROR NEED_MORE_PLAYERS Need at least 2 players");
+    // Check if room has required number of players
+    if (room->player_count < room->max_players) {
+        logger_log(LOG_WARNING, "Room %d: START_GAME rejected - only %d/%d player(s) in room",
+                   room->room_id, room->player_count, room->max_players);
+        char error_msg[MAX_MESSAGE_LENGTH];
+        snprintf(error_msg, sizeof(error_msg),
+                 "ERROR NEED_MORE_PLAYERS Need %d players (currently %d)",
+                 room->max_players, room->player_count);
+        client_send_message(client, error_msg);
         return;
     }
 
-    // Create game with default board size (4x4)
-    int board_size = 4;
-    room->game = game_create(board_size, room->players, room->player_count);
+    logger_log(LOG_INFO, "Room %d: Starting game with %d player(s), board size %dx%d",
+               room->room_id, room->player_count, room->board_size, room->board_size);
+
+    // Create game with room's configured board size
+    room->game = game_create(room->board_size, room->players, room->player_count);
 
     if (room->game == NULL) {
         client_send_message(client, "ERROR Failed to create game");
@@ -384,17 +405,14 @@ static void handle_start_game(client_t *client) {
         return;
     }
 
-    // Send confirmation to owner
-    client_send_message(client, "GAME_CREATED Wait for all players to be ready");
-
     // Broadcast to all players that game is created and they need to be ready
     char broadcast[MAX_MESSAGE_LENGTH];
     snprintf(broadcast, sizeof(broadcast),
-             "GAME_CREATED %d Send READY when you are prepared to play", board_size);
+             "GAME_CREATED %d Send READY when you are prepared to play", room->game->board_size);
     room_broadcast(room, broadcast);
 
     logger_log(LOG_INFO, "Room %d: Game created by %s (board_size=%d, players=%d)",
-               room->room_id, client->nickname, board_size, room->player_count);
+               room->room_id, client->nickname, room->game->board_size, room->player_count);
 }
 
 static void handle_flip(client_t *client, const char *params) {
@@ -495,28 +513,47 @@ static void handle_flip(client_t *client, const char *params) {
                 game_destroy(game);
                 room->game = NULL;
                 room->state = ROOM_STATE_FINISHED;
+
+                // Return all players to lobby
+                for (int i = 0; i < room->player_count; i++) {
+                    if (room->players[i] != NULL) {
+                        room->players[i]->room = NULL;
+                        room->players[i]->state = STATE_IN_LOBBY;
+                        logger_log(LOG_INFO, "Client %d (%s) returned to lobby after game end",
+                                   room->players[i]->client_id, room->players[i]->nickname);
+                    }
+                }
+
+                // Destroy the finished room
+                room_destroy(room);
             } else {
                 // Same player continues, send YOUR_TURN
                 client_send_message(client, "YOUR_TURN");
             }
         } else {
-            // MISMATCH
-            room_broadcast(room, "MISMATCH");
-
-            // Send YOUR_TURN to next player
+            // MISMATCH - include next player's name
             client_t *next_player = game_get_current_player(game);
             if (next_player != NULL) {
+                char mismatch_msg[MAX_MESSAGE_LENGTH];
+                snprintf(mismatch_msg, sizeof(mismatch_msg), "MISMATCH %s", next_player->nickname);
+                room_broadcast(room, mismatch_msg);
+
+                // Send YOUR_TURN to next player
                 client_send_message(next_player, "YOUR_TURN");
                 logger_log(LOG_INFO, "Room %d: Turn passed to %s",
                            room->room_id, next_player->nickname);
+            } else {
+                room_broadcast(room, "MISMATCH");
             }
         }
     }
 }
 
 static void handle_pong(client_t *client) {
-    // Just update last activity
+    // Update last activity and PONG tracking
     client->last_activity = time(NULL);
+    client->last_pong_time = time(NULL);
+    client->waiting_for_pong = 0;  // Reset waiting flag
     logger_log(LOG_INFO, "Client %d: PONG received", client->client_id);
 }
 
@@ -541,8 +578,14 @@ static void handle_reconnect(client_t *new_client, const char *params) {
         return;
     }
 
-    // Check disconnect time
-    time_t disconnect_duration = time(NULL) - old_client->last_activity;
+    // Check disconnect time - use disconnect_time if player was disconnected from game
+    time_t disconnect_duration;
+    if (old_client->is_disconnected) {
+        disconnect_duration = time(NULL) - old_client->disconnect_time;
+    } else {
+        disconnect_duration = time(NULL) - old_client->last_activity;
+    }
+
     if (disconnect_duration > SHORT_DISCONNECT_TIMEOUT) {
         client_send_message(new_client, "ERROR Session expired (timeout > 60s)");
         logger_log(LOG_WARNING, "Client %d: RECONNECT failed - timeout too long (%ld seconds)",
@@ -559,13 +602,16 @@ static void handle_reconnect(client_t *new_client, const char *params) {
     new_client->room = old_client->room;
     new_client->client_id = old_client->client_id;  // Keep old ID
     new_client->last_activity = time(NULL);
+    new_client->is_disconnected = 0;  // Reset disconnected flag
+    new_client->disconnect_time = 0;
+    new_client->waiting_for_pong = 0;  // Reset PING-PONG tracking
+    new_client->last_pong_time = time(NULL);
+    new_client->last_ping_time = 0;
 
-    // Replace old client in client list
-    client_list_remove(old_client);
-    client_list_add(new_client);
-
-    // Close old socket
-    close(old_client->socket_fd);
+    // Close old socket if still valid
+    if (old_client->socket_fd >= 0) {
+        close(old_client->socket_fd);
+    }
 
     // Update room player pointer if in room
     if (new_client->room != NULL) {
@@ -593,8 +639,18 @@ static void handle_reconnect(client_t *new_client, const char *params) {
         }
     }
 
-    // Free old client (but don't close socket or broadcast disconnect)
-    free(old_client);
+    // Remove old client from list FIRST
+    client_list_remove(old_client);
+
+    // THEN mark as zombie - timeout_checker will free it later
+    // This prevents race condition where timeout_checker frees while we're removing
+    old_client->socket_fd = -2;  // Special marker for "to be freed"
+    old_client->room = NULL;      // Prevent room_remove_player() access
+    old_client->is_disconnected = 0;  // Prevent disconnect timeout handling
+    old_client->nickname[0] = '\0';   // Clear nickname to detect zombie access
+
+    // Add new client to list
+    client_list_add(new_client);
 
     // Send WELCOME with same client ID
     char welcome_msg[MAX_MESSAGE_LENGTH];
@@ -602,22 +658,57 @@ static void handle_reconnect(client_t *new_client, const char *params) {
              new_client->client_id);
     client_send_message(new_client, welcome_msg);
 
-    // If in game, send GAME_STATE to restore game
-    if (new_client->room != NULL && new_client->room->game != NULL) {
-        game_t *game = (game_t *)new_client->room->game;
-        if (game->state == GAME_STATE_PLAYING) {
-            char state_msg[MAX_MESSAGE_LENGTH];
-            if (game_format_state_message(game, state_msg, sizeof(state_msg)) == 0) {
-                client_send_message(new_client, state_msg);
-                logger_log(LOG_INFO, "Client %d: Sent GAME_STATE for reconnection",
-                          new_client->client_id);
-            }
-        }
+    // If in room, restore room/game state
+    if (new_client->room != NULL) {
+        room_t *room = new_client->room;
 
-        // Notify other players
+        // Notify other players about reconnection
         char broadcast[MAX_MESSAGE_LENGTH];
         snprintf(broadcast, sizeof(broadcast), "PLAYER_RECONNECTED %s", new_client->nickname);
-        room_broadcast(new_client->room, broadcast);
+        room_broadcast(room, broadcast);
+
+        if (room->game != NULL) {
+            game_t *game = (game_t *)room->game;
+
+            if (game->state == GAME_STATE_PLAYING) {
+                // Game is actively playing - send full game state
+                char state_msg[MAX_MESSAGE_LENGTH];
+                if (game_format_state_message(game, state_msg, sizeof(state_msg)) == 0) {
+                    client_send_message(new_client, state_msg);
+                    logger_log(LOG_INFO, "Client %d: Sent GAME_STATE for reconnection",
+                              new_client->client_id);
+                }
+
+                // If it's the reconnected player's turn, send YOUR_TURN
+                client_t *current_player = game_get_current_player(game);
+                if (current_player == new_client) {
+                    client_send_message(new_client, "YOUR_TURN");
+                    logger_log(LOG_INFO, "Client %d: It's your turn after reconnection",
+                              new_client->client_id);
+                }
+            } else if (game->state == GAME_STATE_WAITING) {
+                // Game created but waiting for READY - send room info
+                char room_msg[MAX_MESSAGE_LENGTH];
+                snprintf(room_msg, sizeof(room_msg), "ROOM_JOINED %d %s", room->room_id, room->name);
+                client_send_message(new_client, room_msg);
+
+                // Send GAME_CREATED to remind about READY
+                char game_created_msg[MAX_MESSAGE_LENGTH];
+                snprintf(game_created_msg, sizeof(game_created_msg),
+                         "GAME_CREATED %d Send READY when you are prepared to play", game->board_size);
+                client_send_message(new_client, game_created_msg);
+
+                logger_log(LOG_INFO, "Client %d: Sent ROOM_JOINED and GAME_CREATED for reconnection",
+                          new_client->client_id);
+            }
+        } else {
+            // In room but no game yet - just send room info
+            char room_msg[MAX_MESSAGE_LENGTH];
+            snprintf(room_msg, sizeof(room_msg), "ROOM_JOINED %d %s", room->room_id, room->name);
+            client_send_message(new_client, room_msg);
+            logger_log(LOG_INFO, "Client %d: Sent ROOM_JOINED for reconnection",
+                      new_client->client_id);
+        }
     }
 
     logger_log(LOG_INFO, "Client %d: Reconnection successful", new_client->client_id);
@@ -643,7 +734,7 @@ void* client_handler_thread(void *arg) {
         }
 
         if (bytes_received == 0) {
-            logger_log(LOG_INFO, "Client %d: Connection closed by client", client->client_id);
+            logger_log(LOG_INFO, "Client %d: Connection closed", client->client_id);
             break;
         }
 
@@ -658,8 +749,10 @@ void* client_handler_thread(void *arg) {
                 line_buffer[line_pos] = '\0';
 
                 if (line_pos > 0) {
-                    // Log the received message
-                    logger_log(LOG_INFO, "Client %d: Received message: '%s'", client->client_id, line_buffer);
+                    // Log the received message (except PING/PONG which have their own logs)
+                    if (strcmp(line_buffer, "PONG") != 0 && strcmp(line_buffer, "PING") != 0) {
+                        logger_log(LOG_INFO, "Client %d: Received message: '%s'", client->client_id, line_buffer);
+                    }
 
                     // Update last activity
                     client->last_activity = time(NULL);
@@ -687,22 +780,26 @@ void* client_handler_thread(void *arg) {
         }
     }
 
-    // Cleanup - remove from room if in one
+    // Cleanup - handle disconnection
     if (client->room != NULL) {
-        logger_log(LOG_INFO, "Client %d: Removing from room %d", client->client_id, client->room->room_id);
+        // Player is in a room - mark as disconnected and wait for reconnect
+        logger_log(LOG_INFO, "Client %d (%s): Disconnected in room %d - waiting for reconnect",
+                   client->client_id, client->nickname, client->room->room_id);
 
-        room_t *room = client->room;
-        int room_id = room->room_id;
+        client->is_disconnected = 1;
+        client->disconnect_time = time(NULL);
+        client->socket_fd = -1;  // Mark socket as invalid
 
-        room_remove_player(room, client);
+        // Notify other players about SHORT disconnect (exclude the disconnected client)
+        char broadcast[MAX_MESSAGE_LENGTH];
+        snprintf(broadcast, sizeof(broadcast), "PLAYER_DISCONNECTED %s SHORT", client->nickname);
+        room_broadcast_except(client->room, broadcast, client);
 
-        // Notify other players
-        room = room_get_by_id(room_id);
-        if (room != NULL) {
-            char broadcast[MAX_MESSAGE_LENGTH];
-            snprintf(broadcast, sizeof(broadcast), "PLAYER_DISCONNECTED %s LONG", client->nickname);
-            room_broadcast(room, broadcast);
-        }
+        logger_log(LOG_INFO, "Client %d (%s): Will be removed after %d seconds if not reconnected",
+                   client->client_id, client->nickname, SHORT_DISCONNECT_TIMEOUT);
+
+        // Don't remove client from list or free - wait for reconnect or timeout
+        return NULL;
     }
 
     logger_log(LOG_INFO, "Client %d: Closing connection", client->client_id);
@@ -710,7 +807,11 @@ void* client_handler_thread(void *arg) {
     // Remove from client list
     client_list_remove(client);
 
-    close(client->socket_fd);
+    // Close socket only if not already closed by timeout checker
+    if (client->socket_fd >= 0) {
+        close(client->socket_fd);
+        client->socket_fd = -1;
+    }
     free(client);
 
     return NULL;

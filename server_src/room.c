@@ -45,13 +45,18 @@ void room_system_shutdown(void) {
     logger_log(LOG_INFO, "Room system shutdown");
 }
 
-room_t* room_create(const char *name, int max_players, client_t *owner) {
+room_t* room_create(const char *name, int max_players, int board_size, client_t *owner) {
     if (name == NULL || owner == NULL) {
         return NULL;
     }
 
     if (max_players < 2 || max_players > MAX_PLAYERS_PER_ROOM) {
         logger_log(LOG_WARNING, "Invalid max_players: %d (must be 2-4)", max_players);
+        return NULL;
+    }
+
+    if (board_size < 4 || board_size > 8 || board_size % 2 != 0) {
+        logger_log(LOG_WARNING, "Invalid board_size: %d (must be 4, 6, or 8)", board_size);
         return NULL;
     }
 
@@ -85,6 +90,7 @@ room_t* room_create(const char *name, int max_players, client_t *owner) {
     strncpy(room->name, name, MAX_ROOM_NAME_LENGTH - 1);
     room->name[MAX_ROOM_NAME_LENGTH - 1] = '\0';
     room->max_players = max_players;
+    room->board_size = board_size;
     room->player_count = 0;
     room->state = ROOM_STATE_WAITING;
     room->owner = owner;
@@ -214,6 +220,8 @@ void room_destroy(room_t *room) {
         return;
     }
 
+    pthread_mutex_lock(&rooms_mutex);
+
     // Remove all players
     for (int i = 0; i < MAX_PLAYERS_PER_ROOM; i++) {
         if (room->players[i] != NULL) {
@@ -222,7 +230,18 @@ void room_destroy(room_t *room) {
         }
     }
 
+    // Remove room from global rooms array
+    for (int i = 0; i < max_rooms; i++) {
+        if (rooms[i] == room) {
+            rooms[i] = NULL;
+            break;
+        }
+    }
+
     logger_log(LOG_INFO, "Room %d destroyed", room->room_id);
+
+    pthread_mutex_unlock(&rooms_mutex);
+
     free(room);
 }
 
@@ -250,7 +269,12 @@ int room_get_list_message(char *buffer, int buffer_size) {
         if (rooms[i] != NULL) {
             room_t *r = rooms[i];
 
-            // Format: ROOM_LIST <count> <id> <name> <players> <max> <state> ...
+            // Skip FINISHED rooms - they should not appear in lobby
+            if (r->state == ROOM_STATE_FINISHED) {
+                continue;
+            }
+
+            // Format: ROOM_LIST <count> <id> <name> <players> <max> <state> <board_size> ...
             if (room_count == 0) {
                 // Add count placeholder (we'll know total at the end)
                 offset += snprintf(buffer + offset, buffer_size - offset, " %d", 0);
@@ -259,13 +283,11 @@ int room_get_list_message(char *buffer, int buffer_size) {
             const char *state_str = "WAITING";
             if (r->state == ROOM_STATE_PLAYING) {
                 state_str = "PLAYING";
-            } else if (r->state == ROOM_STATE_FINISHED) {
-                state_str = "FINISHED";
             }
 
             offset += snprintf(buffer + offset, buffer_size - offset,
-                               " %d %s %d %d %s",
-                               r->room_id, r->name, r->player_count, r->max_players, state_str);
+                               " %d %s %d %d %s %d",
+                               r->room_id, r->name, r->player_count, r->max_players, state_str, r->board_size);
 
             room_count++;
         }
@@ -288,6 +310,10 @@ int room_get_list_message(char *buffer, int buffer_size) {
 }
 
 void room_broadcast(room_t *room, const char *message) {
+    room_broadcast_except(room, message, NULL);
+}
+
+void room_broadcast_except(room_t *room, const char *message, client_t *exclude_client) {
     if (room == NULL || message == NULL) {
         return;
     }
@@ -295,7 +321,7 @@ void room_broadcast(room_t *room, const char *message) {
     pthread_mutex_lock(&rooms_mutex);
 
     for (int i = 0; i < MAX_PLAYERS_PER_ROOM; i++) {
-        if (room->players[i] != NULL) {
+        if (room->players[i] != NULL && room->players[i] != exclude_client) {
             client_send_message(room->players[i], message);
         }
     }

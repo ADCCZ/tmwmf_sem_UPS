@@ -234,6 +234,11 @@ public class LoginController implements MessageListener {
      */
     private void switchToLobby() {
         Platform.runLater(() -> {
+            if (stage == null) {
+                log("ERROR: Cannot switch to lobby - stage is null");
+                return;
+            }
+
             try {
                 FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/LobbyView.fxml"));
                 Parent root = loader.load();

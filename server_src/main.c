@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/socket.h>
 
 void print_usage(const char *program_name) {
     printf("Usage: %s <IP> <PORT> <MAX_ROOMS> <MAX_CLIENTS>\n", program_name);
@@ -25,6 +26,12 @@ void signal_handler(int signum) {
     server_config_t *config = server_get_config();
     if (config != NULL) {
         config->running = 0;
+
+        // Close listen socket to unblock accept()
+        // This makes accept() return immediately with error
+        if (config->listen_fd >= 0) {
+            shutdown(config->listen_fd, SHUT_RDWR);
+        }
     }
 }
 
@@ -86,5 +93,8 @@ int main(int argc, char *argv[]) {
     logger_shutdown();
 
     printf("Server terminated\n");
-    return 0;
+
+    // Use exit(0) instead of return 0 to terminate immediately
+    // This prevents waiting for detached threads to finish sleeping
+    exit(0);
 }

@@ -25,6 +25,7 @@ typedef struct room_s {
     client_t *players[MAX_PLAYERS_PER_ROOM];
     int player_count;
     int max_players;
+    int board_size;  // Board size for game (4, 6, or 8)
     room_state_t state;
     client_t *owner;  // Room creator
     struct game_s *game;  // Game instance (NULL if no game)
@@ -46,10 +47,11 @@ void room_system_shutdown(void);
  * Create a new room
  * @param name Room name
  * @param max_players Maximum number of players (2-4)
+ * @param board_size Board size for game (4, 6, or 8)
  * @param owner Room creator
  * @return Pointer to room or NULL on error
  */
-room_t* room_create(const char *name, int max_players, client_t *owner);
+room_t* room_create(const char *name, int max_players, int board_size, client_t *owner);
 
 /**
  * Get room by ID
@@ -101,5 +103,13 @@ int room_get_list_message(char *buffer, int buffer_size);
  * @param message Message to send
  */
 void room_broadcast(room_t *room, const char *message);
+
+/**
+ * Broadcast message to all players in room except one
+ * @param room Room to broadcast to
+ * @param message Message to send
+ * @param exclude_client Client to exclude from broadcast (can be NULL)
+ */
+void room_broadcast_except(room_t *room, const char *message, client_t *exclude_client);
 
 #endif /* ROOM_H */

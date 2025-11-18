@@ -33,6 +33,7 @@ public class ProtocolConstants {
     public static final String CMD_GAME_STATE = "GAME_STATE";
     public static final String CMD_PING = "PING";
     public static final String CMD_PLAYER_DISCONNECTED = "PLAYER_DISCONNECTED";
+    public static final String CMD_SERVER_SHUTDOWN = "SERVER_SHUTDOWN";
     public static final String CMD_ERROR = "ERROR";
 
     // Error codes
@@ -57,8 +58,8 @@ public class ProtocolConstants {
 
     // Timeouts
     public static final int CONNECTION_TIMEOUT_MS = 5000;      // 5 seconds to connect
-    public static final int READ_TIMEOUT_MS = 120000;          // 2 minutes read timeout
-    public static final int RECONNECT_INTERVAL_MS = 2000;
+    public static final int READ_TIMEOUT_MS = 30000;           // 30 seconds read timeout (faster disconnect detection)
+    public static final int RECONNECT_INTERVAL_MS = 10000;     // 10 seconds between reconnect attempts
     public static final int MAX_RECONNECT_ATTEMPTS = 5;
 
     private ProtocolConstants() {

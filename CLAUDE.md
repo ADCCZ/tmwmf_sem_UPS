@@ -87,15 +87,20 @@ Based on assignment requirements:
 
 ## Building and Running
 
-### Server (when implemented)
+### Server (Linux/WSL)
 - Build: `make` in server_src/
 - Run: `./server [IP] [PORT] [MAX_ROOMS] [MAX_PLAYERS]`
-- Configuration may also be via config file
+- Example: `./server 0.0.0.0 10000 10 50`
 
-### Client (when implemented)
-- Build: `mvn package` or `ant build` in client_src/
-- Run: `java -jar client.jar` or equivalent
-- UI should allow entering server IP and port
+### Client (Windows/Linux)
+- Build: `mvn clean package` in client_src/
+- Run: `java -jar target/pexeso-client-1.0-SNAPSHOT.jar`
+
+**Windows users:**
+- Use `build-client.bat` to build
+- Use `run-client.bat` to run
+- See `client_src/README-WINDOWS.md` for detailed instructions
+- See `QUICK-START-WINDOWS.md` for quick setup guide
 
 ## Testing Requirements
 

@@ -19,6 +19,11 @@ typedef struct {
     int invalid_message_count;
     int client_id;
     struct room_s *room;  // Current room (NULL if in lobby)
+    int is_disconnected;  // 1 if client disconnected but waiting for reconnect
+    time_t disconnect_time;  // When the client disconnected
+    int waiting_for_pong;  // 1 if waiting for PONG response
+    time_t last_ping_time;  // When the last PING was sent
+    time_t last_pong_time;  // When the last PONG was received
 } client_t;
 
 /**

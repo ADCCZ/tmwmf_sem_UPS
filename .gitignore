@@ -1,0 +1,33 @@
+# Server build files
+server_src/build/
+server_src/server
+server_src/*.o
+server_src/server.log
+
+# Client build files
+client_src/target/
+client_src/.classpath
+client_src/.project
+client_src/.settings/
+client_src/dependency-reduced-pom.xml
+
+# Client installers (large binary files)
+client_src/installer/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp

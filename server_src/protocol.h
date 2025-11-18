@@ -11,10 +11,11 @@
 #define MAX_ROOM_NAME_LENGTH 64
 
 // Timeout constants (in seconds)
-#define PING_INTERVAL 15           // Send PING every 15 seconds
+#define PING_INTERVAL 15           // Send PING every 15 seconds (deprecated, now using PONG_WAIT_INTERVAL)
 #define PONG_TIMEOUT 5             // Expect PONG within 5 seconds
-#define SHORT_DISCONNECT_TIMEOUT 60    // < 60s = short disconnect (reconnect possible)
-#define LONG_DISCONNECT_TIMEOUT 60     // >= 60s = long disconnect (player removed)
+#define PONG_WAIT_INTERVAL 5       // Wait 5 seconds after PONG before sending next PING
+#define SHORT_DISCONNECT_TIMEOUT 120   // < 120s = short disconnect (reconnect possible)
+#define LONG_DISCONNECT_TIMEOUT 120    // >= 120s = long disconnect (player removed)
 
 // Protocol commands (client to server)
 #define CMD_HELLO "HELLO"
@@ -46,6 +47,7 @@
 #define CMD_GAME_STATE "GAME_STATE"
 #define CMD_PING "PING"
 #define CMD_PLAYER_DISCONNECTED "PLAYER_DISCONNECTED"
+#define CMD_SERVER_SHUTDOWN "SERVER_SHUTDOWN"
 #define CMD_ERROR "ERROR"
 
 // Error codes

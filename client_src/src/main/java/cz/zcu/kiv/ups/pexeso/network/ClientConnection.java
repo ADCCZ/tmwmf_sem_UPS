@@ -28,6 +28,8 @@ public class ClientConnection {
     private int clientId = -1;  // Client ID for reconnection
     private boolean autoReconnect = false;  // Enable auto-reconnect after authentication
     private volatile boolean reconnecting = false;
+    private volatile boolean userDisconnect = false;  // Track user-initiated disconnect
+    private volatile boolean serverShutdown = false;  // Track server shutdown
 
     /**
      * Create a new client connection
@@ -48,6 +50,8 @@ public class ClientConnection {
     public void connect(String host, int port) throws IOException {
         this.serverHost = host;
         this.serverPort = port;
+        this.userDisconnect = false;  // Reset user disconnect flag for new connection
+        this.serverShutdown = false;  // Reset server shutdown flag for new connection
 
         try {
             // Create socket with connection timeout
@@ -110,6 +114,7 @@ public class ClientConnection {
      * Disconnect from server
      */
     public void disconnect() {
+        userDisconnect = true;  // Mark as user-initiated disconnect
         running = false;
         cleanup();
 
@@ -127,15 +132,29 @@ public class ClientConnection {
             while (running && (line = in.readLine()) != null) {
                 final String message = line.trim();
 
-                if (!message.isEmpty() && listener != null) {
-                    listener.onMessageReceived(message);
+                if (!message.isEmpty()) {
+                    // Check for server shutdown before passing to listener
+                    if (message.startsWith(ProtocolConstants.CMD_SERVER_SHUTDOWN)) {
+                        System.out.println("Server is shutting down - will not attempt reconnect");
+                        serverShutdown = true;
+                        running = false;
+                        if (listener != null) {
+                            listener.onDisconnected("Server is shutting down");
+                        }
+                        break;  // Exit read loop
+                    }
+
+                    if (listener != null) {
+                        listener.onMessageReceived(message);
+                    }
                 }
             }
 
-            // Connection closed by server
+            // Connection closed by server (but don't notify if auto-reconnect will handle it)
             if (running) {
                 running = false;
-                if (listener != null) {
+                // Only notify disconnect if auto-reconnect won't handle it
+                if (listener != null && (!autoReconnect || clientId <= 0 || userDisconnect || serverShutdown)) {
                     listener.onDisconnected("Connection closed by server");
                 }
             }
@@ -158,32 +177,47 @@ public class ClientConnection {
             running = false;
             cleanup();
 
-            // Attempt automatic reconnect if enabled
-            if (autoReconnect && clientId > 0 && !reconnecting) {
+            // Attempt automatic reconnect if enabled (but NOT if user disconnected or server shut down)
+            if (autoReconnect && clientId > 0 && !reconnecting && !userDisconnect && !serverShutdown) {
                 System.out.println("Auto-reconnect triggered");
 
+                // Notify user that reconnection is starting
+                if (listener != null) {
+                    listener.onError("Connection lost. Attempting to reconnect...");
+                }
+
                 for (int attempt = 1; attempt <= ProtocolConstants.MAX_RECONNECT_ATTEMPTS; attempt++) {
+                    // Wait before each attempt (including the first one)
+                    try {
+                        System.out.println("Waiting " + (ProtocolConstants.RECONNECT_INTERVAL_MS / 1000) + " seconds before reconnect attempt " + attempt + "/" + ProtocolConstants.MAX_RECONNECT_ATTEMPTS);
+
+                        // Notify user about waiting period
+                        if (listener != null && attempt == 1) {
+                            listener.onError("Trying to reconnect in " + (ProtocolConstants.RECONNECT_INTERVAL_MS / 1000) + " seconds...");
+                        }
+
+                        Thread.sleep(ProtocolConstants.RECONNECT_INTERVAL_MS);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+
                     System.out.println("Reconnect attempt " + attempt + "/" + ProtocolConstants.MAX_RECONNECT_ATTEMPTS);
+
+                    // Notify user about reconnect attempt
+                    if (listener != null) {
+                        listener.onError("Reconnecting... (attempt " + attempt + "/" + ProtocolConstants.MAX_RECONNECT_ATTEMPTS + ")");
+                    }
 
                     if (reconnect()) {
                         System.out.println("Auto-reconnect successful!");
                         return;  // Successfully reconnected, exit readerLoop
                     }
-
-                    // Wait before next attempt
-                    if (attempt < ProtocolConstants.MAX_RECONNECT_ATTEMPTS) {
-                        try {
-                            Thread.sleep(ProtocolConstants.RECONNECT_INTERVAL_MS);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
                 }
 
                 System.err.println("Auto-reconnect failed after " + ProtocolConstants.MAX_RECONNECT_ATTEMPTS + " attempts");
                 if (listener != null) {
-                    listener.onDisconnected("Failed to reconnect");
+                    listener.onDisconnected("Failed to reconnect after " + ProtocolConstants.MAX_RECONNECT_ATTEMPTS + " attempts");
                 }
             }
         }
@@ -301,6 +335,7 @@ public class ClientConnection {
             if (response != null && response.startsWith("WELCOME")) {
                 // Reconnect successful, restart reader thread
                 running = true;
+                userDisconnect = false;  // Reset user disconnect flag after successful reconnect
                 readerThread = new Thread(this::readerLoop, "ClientConnection-Reader");
                 readerThread.setDaemon(true);
                 readerThread.start();
@@ -312,6 +347,20 @@ public class ClientConnection {
                 reconnecting = false;
                 System.out.println("Reconnect successful!");
                 return true;
+            } else if (response != null && response.contains("Client not found") ||
+                      (response != null && response.contains("session expired"))) {
+                // Client was removed from server after long disconnect timeout
+                // Stop auto-reconnect and require manual login
+                System.err.println("Session expired - client was removed from server after timeout");
+                cleanup();
+                reconnecting = false;
+                autoReconnect = false;  // DISABLE auto-reconnect permanently
+                clientId = -1;  // Clear client ID
+
+                if (listener != null) {
+                    listener.onDisconnected("Your session has expired. Please login again manually.");
+                }
+                return false;  // This will exit the auto-reconnect loop
             } else {
                 System.err.println("Reconnect failed: " + response);
                 cleanup();

@@ -16,8 +16,6 @@ import javafx.stage.Stage;
 import java.io.IOException;
 import java.util.Optional;
 
-import static cz.zcu.kiv.ups.pexeso.protocol.ProtocolConstants.*;
-
 /**
  * Controller for the lobby view
  */
@@ -41,10 +39,14 @@ public class LobbyController implements MessageListener {
     @FXML
     private Label nicknameLabel;
 
+    @FXML
+    private Button disconnectButton;
+
     private ClientConnection connection;
     private String nickname;
     private ObservableList<Room> rooms;
     private Stage stage;
+    private boolean reconnectionAlertShown = false;  // Track if reconnection alert was shown
 
     public void initialize() {
         rooms = FXCollections.observableArrayList();
@@ -128,8 +130,27 @@ public class LobbyController implements MessageListener {
             return;
         }
 
-        // Send CREATE_ROOM command
-        boolean sent = connection.sendMessage(String.format("CREATE_ROOM %s %d", roomName, maxPlayers));
+        // Ask for board size (number of cards = board_size * board_size)
+        ChoiceDialog<Integer> boardSizeDialog = new ChoiceDialog<>(4, 4, 6, 8);
+        boardSizeDialog.setTitle("Create Room");
+        boardSizeDialog.setHeaderText("Select board size");
+        boardSizeDialog.setContentText("Board size (4x4=16 cards, 6x6=36 cards, 8x8=64 cards):");
+
+        Optional<Integer> boardSizeResult = boardSizeDialog.showAndWait();
+        if (!boardSizeResult.isPresent()) {
+            return;
+        }
+
+        int boardSize = boardSizeResult.get();
+
+        // Validate board size
+        if (boardSize < 4 || boardSize > 8 || boardSize % 2 != 0) {
+            showError("Invalid board size", "Board size must be 4, 6, or 8 (even number).");
+            return;
+        }
+
+        // Send CREATE_ROOM command with board size
+        boolean sent = connection.sendMessage(String.format("CREATE_ROOM %s %d %d", roomName, maxPlayers, boardSize));
         if (sent) {
             updateStatus("Creating room...");
         } else {
@@ -171,6 +192,23 @@ public class LobbyController implements MessageListener {
         }
     }
 
+    @FXML
+    private void handleDisconnect() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Disconnect");
+        confirm.setHeaderText("Disconnect from server?");
+        confirm.setContentText("Are you sure you want to disconnect from the server?");
+
+        Optional<ButtonType> result = confirm.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            updateStatus("Disconnecting...");
+            if (connection != null) {
+                connection.disconnect();
+            }
+            returnToLogin();
+        }
+    }
+
     private void refreshRooms() {
         connection.sendMessage("LIST_ROOMS");
         updateStatus("Refreshing room list...");
@@ -205,6 +243,25 @@ public class LobbyController implements MessageListener {
             case "ROOM_JOINED":
                 handleRoomJoined(message);
                 break;
+            case "GAME_STATE":
+                // Received after reconnect - we're in an active game
+                System.out.println("Lobby: Received GAME_STATE - switching to game view for reconnect");
+                handleGameStateReconnect(message);
+                break;
+            case "YOUR_TURN":
+                // Also indicates we're in active game after reconnect
+                System.out.println("Lobby: Received YOUR_TURN - likely after reconnect, switching to game view");
+                handleGameStateReconnect(null);
+                break;
+            case "PLAYER_RECONNECTED":
+                // Someone reconnected, we might be in game
+                System.out.println("Lobby: " + message);
+                break;
+            case "PING":
+                // Respond to PING with PONG
+                connection.sendMessage("PONG");
+                System.out.println("Lobby: Received PING, sent PONG");
+                break;
             case "ERROR":
                 handleError(message);
                 break;
@@ -216,7 +273,7 @@ public class LobbyController implements MessageListener {
     }
 
     private void handleRoomList(String message) {
-        // Format: ROOM_LIST <count> [<id> <name> <current> <max> <state>]*
+        // Format: ROOM_LIST <count> [<id> <name> <current> <max> <state> <board_size>]*
         String[] parts = message.split(" ");
         if (parts.length < 2) return;
 
@@ -233,7 +290,7 @@ public class LobbyController implements MessageListener {
             int index = 2;
             int activeRooms = 0;
             for (int i = 0; i < count; i++) {
-                if (index + 4 >= parts.length) break;
+                if (index + 5 >= parts.length) break;
 
                 try {
                     int id = Integer.parseInt(parts[index++]);
@@ -241,10 +298,11 @@ public class LobbyController implements MessageListener {
                     int current = Integer.parseInt(parts[index++]);
                     int max = Integer.parseInt(parts[index++]);
                     String state = parts[index++];
+                    int boardSize = Integer.parseInt(parts[index++]);
 
                     // Skip finished games - they should not appear in lobby
                     if (!"FINISHED".equals(state)) {
-                        rooms.add(new Room(id, name, current, max, state));
+                        rooms.add(new Room(id, name, current, max, state, boardSize));
                         activeRooms++;
                     }
                 } catch (Exception e) {
@@ -283,6 +341,9 @@ public class LobbyController implements MessageListener {
         int roomId = Integer.parseInt(parts[1]);
         String roomName = parts[2];
 
+        System.out.println("Lobby: Handling ROOM_JOINED - roomId=" + roomId + ", name=" + roomName);
+        System.out.println("Lobby: Stage is " + (stage == null ? "NULL" : "set"));
+
         Platform.runLater(() -> {
             updateStatus("Joined room: " + roomName);
             // Switch to game view
@@ -295,6 +356,49 @@ public class LobbyController implements MessageListener {
             updateStatus("Error: " + message);
             showError("Server Error", message);
         });
+    }
+
+    /**
+     * Handle GAME_STATE message received after reconnect
+     * This means we're in an active game and need to switch to game view
+     */
+    private void handleGameStateReconnect(String gameStateMessage) {
+        Platform.runLater(() -> {
+            updateStatus("Reconnected to active game!");
+            // We don't have room info after reconnect, use placeholder
+            // The game view will be populated from GAME_STATE
+            switchToGameViewForReconnect(gameStateMessage);
+        });
+    }
+
+    private void switchToGameViewForReconnect(String pendingGameState) {
+        if (stage == null) {
+            System.err.println("Cannot switch to game view: stage is null");
+            return;
+        }
+
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/GameView.fxml"));
+            Parent root = loader.load();
+
+            GameController gameController = loader.getController();
+            gameController.setConnection(connection, nickname);
+            // Use placeholder room info - will be updated from GAME_STATE
+            gameController.setRoomInfo(0, "Reconnected Game", false);
+            gameController.setStage(stage);
+
+            // If we have pending GAME_STATE, process it immediately
+            if (pendingGameState != null) {
+                gameController.onMessageReceived(pendingGameState);
+            }
+
+            Scene scene = new Scene(root, 800, 600);
+            stage.setScene(scene);
+            stage.setTitle("Pexeso - Reconnected Game");
+        } catch (IOException e) {
+            e.printStackTrace();
+            showError("Error", "Failed to load game view: " + e.getMessage());
+        }
     }
 
     private void switchToGameView(int roomId, String roomName, boolean isOwner) {
@@ -318,22 +422,69 @@ public class LobbyController implements MessageListener {
 
     @Override
     public void onConnected() {
-        // Already connected when we get to lobby
+        // Reset reconnection alert flag after successful reconnection
+        reconnectionAlertShown = false;
+        Platform.runLater(() -> updateStatus("Connected to server"));
     }
 
     @Override
     public void onDisconnected(String reason) {
+        // Reset reconnection alert flag
+        reconnectionAlertShown = false;
+
         Platform.runLater(() -> {
             showError("Disconnected", "Lost connection to server: " + reason);
             updateStatus("Disconnected");
+            // Return to login screen
+            returnToLogin();
         });
+    }
+
+    private void returnToLogin() {
+        if (stage == null) {
+            System.err.println("Cannot return to login: stage is null");
+            return;
+        }
+
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/LoginView.fxml"));
+            Parent root = loader.load();
+
+            // Pass stage to LoginController
+            LoginController loginController = loader.getController();
+            loginController.setStage(stage);
+
+            Scene scene = new Scene(root, 400, 300);
+            stage.setScene(scene);
+            stage.setTitle("Pexeso - Login");
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.err.println("Failed to load login view: " + e.getMessage());
+        }
     }
 
     @Override
     public void onError(String error) {
         Platform.runLater(() -> {
-            showError("Error", error);
-            updateStatus("Error: " + error);
+            updateStatus(error);
+
+            // Show alert ONLY for the first reconnection message
+            if (error.contains("Connection lost") && !reconnectionAlertShown) {
+                reconnectionAlertShown = true;
+
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("Connection Issue");
+                alert.setHeaderText("Connection Lost");
+                alert.setContentText("Connection to server was lost. Attempting to reconnect...");
+                alert.show();  // Non-blocking
+            } else if (!error.contains("Reconnecting") &&
+                       !error.contains("reconnect") &&
+                       !error.contains("Trying to reconnect") &&
+                       !error.contains("Connection lost")) {
+                // For non-reconnection errors, show error dialog
+                showError("Error", error);
+            }
+            // For subsequent reconnection messages, just update status (no alert)
         });
     }
 }

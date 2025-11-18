@@ -9,13 +9,15 @@ public class Room {
     private final int currentPlayers;
     private final int maxPlayers;
     private final String state;
+    private final int boardSize;
 
-    public Room(int id, String name, int currentPlayers, int maxPlayers, String state) {
+    public Room(int id, String name, int currentPlayers, int maxPlayers, String state, int boardSize) {
         this.id = id;
         this.name = name;
         this.currentPlayers = currentPlayers;
         this.maxPlayers = maxPlayers;
         this.state = state;
+        this.boardSize = boardSize;
     }
 
     public int getId() {
@@ -38,8 +40,13 @@ public class Room {
         return state;
     }
 
+    public int getBoardSize() {
+        return boardSize;
+    }
+
     @Override
     public String toString() {
-        return String.format("%s (%d/%d) - %s", name, currentPlayers, maxPlayers, state);
+        return String.format("Room #%d: %s (%d/%d) - %dx%d - %s",
+                           id, name, currentPlayers, maxPlayers, boardSize, boardSize, state);
     }
 }

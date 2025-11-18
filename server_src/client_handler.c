@@ -639,17 +639,15 @@ static void handle_reconnect(client_t *new_client, const char *params) {
         }
     }
 
-    // Remove old client from list FIRST
-    client_list_remove(old_client);
-
-    // THEN mark as zombie - timeout_checker will free it later
-    // This prevents race condition where timeout_checker frees while we're removing
+    // Mark old client as zombie - timeout_checker will free it later
+    // DON'T remove from list yet - must stay in list so timeout_checker can find it!
+    // This prevents memory leak from race condition
     old_client->socket_fd = -2;  // Special marker for "to be freed"
     old_client->room = NULL;      // Prevent room_remove_player() access
     old_client->is_disconnected = 0;  // Prevent disconnect timeout handling
     old_client->nickname[0] = '\0';   // Clear nickname to detect zombie access
 
-    // Add new client to list
+    // Add new client to list (temporarily we have 2 clients with same ID - zombie will be freed soon)
     client_list_add(new_client);
 
     // Send WELCOME with same client ID
@@ -797,6 +795,42 @@ void* client_handler_thread(void *arg) {
 
         logger_log(LOG_INFO, "Client %d (%s): Will be removed after %d seconds if not reconnected",
                    client->client_id, client->nickname, SHORT_DISCONNECT_TIMEOUT);
+
+        // Check if there are enough connected players left to continue the game (need at least 2)
+        if (client->room->game != NULL) {
+            int connected_players = 0;
+            for (int i = 0; i < client->room->player_count; i++) {
+                if (client->room->players[i] != NULL && !client->room->players[i]->is_disconnected) {
+                    connected_players++;
+                }
+            }
+
+            if (connected_players < 2) {
+                logger_log(LOG_INFO, "Room %d: Not enough connected players (%d), ending game",
+                          client->room->room_id, connected_players);
+
+                // End the game
+                char game_end_msg[MAX_MESSAGE_LENGTH];
+                snprintf(game_end_msg, sizeof(game_end_msg),
+                        "GAME_END DISCONNECT Not enough players connected to continue");
+                room_broadcast(client->room, game_end_msg);
+
+                // Clean up game
+                game_destroy((game_t *)client->room->game);
+                client->room->game = NULL;
+                client->room->state = ROOM_STATE_FINISHED;
+
+                // Return remaining connected players to lobby
+                for (int i = 0; i < client->room->player_count; i++) {
+                    if (client->room->players[i] != NULL && !client->room->players[i]->is_disconnected) {
+                        client->room->players[i]->room = NULL;
+                        client->room->players[i]->state = STATE_IN_LOBBY;
+                        logger_log(LOG_INFO, "Client %d (%s) returned to lobby (insufficient players)",
+                                  client->room->players[i]->client_id, client->room->players[i]->nickname);
+                    }
+                }
+            }
+        }
 
         // Don't remove client from list or free - wait for reconnect or timeout
         return NULL;

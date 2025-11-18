@@ -255,6 +255,11 @@ static void* ping_thread_func(void *arg) {
         for (int i = 0; i < count; i++) {
             client_t *client = clients[i];
 
+            // Skip zombie clients (being freed after reconnect)
+            if (client->socket_fd == -2) {
+                continue;
+            }
+
             if (client->state >= STATE_AUTHENTICATED && !client->is_disconnected) {
                 // Check if we're not waiting for PONG
                 if (!client->waiting_for_pong) {
@@ -307,7 +312,7 @@ static void* timeout_checker_thread_func(void *arg) {
             }
 
             // Free zombie clients (marked during reconnect)
-            // These clients were already removed from the list, just need to free memory
+            // Must remove from list AND free memory
             if (client->socket_fd == -2) {
                 logger_log(LOG_INFO, "Client %d: Freeing zombie client after reconnect",
                           client->client_id);
@@ -320,6 +325,8 @@ static void* timeout_checker_thread_func(void *arg) {
                     }
                 }
 
+                // Remove from list (now safe since reconnection is complete)
+                client_list_remove(zombie);
                 free(zombie);
                 continue;
             }
@@ -361,6 +368,8 @@ static void* timeout_checker_thread_func(void *arg) {
                                 if (room->players[j] != NULL && room->players[j] != client) {
                                     room->players[j]->room = NULL;
                                     room->players[j]->state = STATE_IN_LOBBY;
+                                    // IMPORTANT: Reset is_disconnected flag to prevent processing them again in this timeout check
+                                    room->players[j]->is_disconnected = 0;
                                     logger_log(LOG_INFO, "Client %d (%s) returned to lobby after game end (disconnect)",
                                                room->players[j]->client_id, room->players[j]->nickname);
                                 }
@@ -378,8 +387,16 @@ static void* timeout_checker_thread_func(void *arg) {
 
                     // Remove client from list and free
                     client_list_remove(client);
-                    free(client);
-                    clients[i] = NULL;  // Prevent double free if client appears multiple times
+
+                    // Clear ALL pointers to this client in the snapshot array (in case it appears multiple times)
+                    client_t *timeout_client = client;
+                    for (int j = 0; j < count; j++) {
+                        if (clients[j] == timeout_client) {
+                            clients[j] = NULL;
+                        }
+                    }
+
+                    free(timeout_client);
                 }
                 continue;
             }

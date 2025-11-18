@@ -2,6 +2,7 @@
 #include "logger.h"
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static client_t **client_array = NULL;
 static int max_clients = 0;
@@ -31,6 +32,19 @@ void client_list_shutdown(void) {
     pthread_mutex_lock(&list_mutex);
 
     if (client_array != NULL) {
+        // Free all client structures first
+        for (int i = 0; i < max_clients; i++) {
+            if (client_array[i] != NULL) {
+                // Close socket if still open
+                if (client_array[i]->socket_fd >= 0) {
+                    close(client_array[i]->socket_fd);
+                }
+                free(client_array[i]);
+                client_array[i] = NULL;
+            }
+        }
+
+        // Then free the array itself
         free(client_array);
         client_array = NULL;
     }
@@ -103,7 +117,9 @@ client_t* client_list_find_by_id(int client_id) {
     pthread_mutex_lock(&list_mutex);
 
     for (int i = 0; i < max_clients; i++) {
-        if (client_array[i] != NULL && client_array[i]->client_id == client_id) {
+        if (client_array[i] != NULL &&
+            client_array[i]->client_id == client_id &&
+            client_array[i]->socket_fd != -2) {  // Skip zombie clients
             client_t *client = client_array[i];
             pthread_mutex_unlock(&list_mutex);
             return client;

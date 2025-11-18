@@ -102,6 +102,11 @@ public class LoginController implements MessageListener {
             return;
         }
 
+        if (nickname.length() < 3) {
+            log("ERROR: Nickname must be at least 3 characters long");
+            return;
+        }
+
         if (nickname.length() > ProtocolConstants.MAX_NICK_LENGTH) {
             log("ERROR: Nickname too long (max " + ProtocolConstants.MAX_NICK_LENGTH + " characters)");
             return;

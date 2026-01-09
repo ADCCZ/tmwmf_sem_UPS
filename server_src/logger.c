@@ -70,7 +70,6 @@ void logger_shutdown(void) {
     pthread_mutex_lock(&log_mutex);
 
     if (log_file != NULL) {
-        logger_log(LOG_INFO, "Logger shutting down");
         fclose(log_file);
         log_file = NULL;
     }

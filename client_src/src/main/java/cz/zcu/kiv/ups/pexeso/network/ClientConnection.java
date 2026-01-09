@@ -160,26 +160,35 @@ public class ClientConnection {
             }
 
         } catch (SocketTimeoutException e) {
-            System.err.println("Socket timeout: " + e.getMessage());
-            if (running && listener != null) {
-                listener.onError("Connection timeout");
+            System.err.println("DEBUG: Socket timeout after " + ProtocolConstants.READ_TIMEOUT_MS + "ms - this should trigger disconnect!");
+            System.err.println("DEBUG: running=" + running + ", autoReconnect=" + autoReconnect + ", clientId=" + clientId);
+
+            // Socket timeout means connection is dead - exit loop to trigger reconnect
+            running = false;
+            if (listener != null) {
+                listener.onError("Connection timeout - attempting reconnect...");
             }
 
         } catch (IOException e) {
+            System.err.println("DEBUG: IOException occurred: " + e.getMessage());
             if (running) {
                 System.err.println("Connection error: " + e.getMessage());
                 if (listener != null) {
                     listener.onError("Connection lost: " + e.getMessage());
                 }
             }
+            running = false;  // Ensure we exit the loop
 
         } finally {
             running = false;
             cleanup();
 
+            System.err.println("DEBUG: Finally block - autoReconnect=" + autoReconnect + ", clientId=" + clientId +
+                             ", reconnecting=" + reconnecting + ", userDisconnect=" + userDisconnect + ", serverShutdown=" + serverShutdown);
+
             // Attempt automatic reconnect if enabled (but NOT if user disconnected or server shut down)
             if (autoReconnect && clientId > 0 && !reconnecting && !userDisconnect && !serverShutdown) {
-                System.out.println("Auto-reconnect triggered");
+                System.out.println("DEBUG: Auto-reconnect triggered at " + java.time.LocalTime.now());
 
                 // Notify user that reconnection is starting
                 if (listener != null) {
@@ -187,22 +196,19 @@ public class ClientConnection {
                 }
 
                 for (int attempt = 1; attempt <= ProtocolConstants.MAX_RECONNECT_ATTEMPTS; attempt++) {
-                    // Wait before each attempt (including the first one)
-                    try {
-                        System.out.println("Waiting " + (ProtocolConstants.RECONNECT_INTERVAL_MS / 1000) + " seconds before reconnect attempt " + attempt + "/" + ProtocolConstants.MAX_RECONNECT_ATTEMPTS);
-
-                        // Notify user about waiting period
-                        if (listener != null && attempt == 1) {
-                            listener.onError("Trying to reconnect in " + (ProtocolConstants.RECONNECT_INTERVAL_MS / 1000) + " seconds...");
+                    // Wait before each attempt EXCEPT the first one
+                    if (attempt > 1) {
+                        try {
+                            System.out.println("DEBUG: [" + java.time.LocalTime.now() + "] Waiting " + (ProtocolConstants.RECONNECT_INTERVAL_MS / 1000) +
+                                             " seconds before reconnect attempt " + attempt + "/" + ProtocolConstants.MAX_RECONNECT_ATTEMPTS);
+                            Thread.sleep(ProtocolConstants.RECONNECT_INTERVAL_MS);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            break;
                         }
-
-                        Thread.sleep(ProtocolConstants.RECONNECT_INTERVAL_MS);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        break;
                     }
 
-                    System.out.println("Reconnect attempt " + attempt + "/" + ProtocolConstants.MAX_RECONNECT_ATTEMPTS);
+                    System.out.println("DEBUG: [" + java.time.LocalTime.now() + "] Reconnect attempt " + attempt + "/" + ProtocolConstants.MAX_RECONNECT_ATTEMPTS);
 
                     // Notify user about reconnect attempt
                     if (listener != null) {
@@ -298,22 +304,24 @@ public class ClientConnection {
      */
     public boolean reconnect() {
         if (clientId <= 0) {
-            System.err.println("Cannot reconnect: no client ID");
+            System.err.println("DEBUG: Cannot reconnect: no client ID");
             return false;
         }
 
         if (reconnecting) {
-            System.err.println("Already reconnecting");
+            System.err.println("DEBUG: Already reconnecting");
             return false;
         }
 
         reconnecting = true;
-        System.out.println("Attempting reconnect with client ID: " + clientId);
+        System.out.println("DEBUG: [" + java.time.LocalTime.now() + "] Attempting reconnect with client ID: " + clientId);
 
         try {
             // Close old connection
             cleanup();
-            Thread.sleep(ProtocolConstants.RECONNECT_INTERVAL_MS);
+
+            // NOTE: Don't sleep here - auto-reconnect loop already waits before calling reconnect()
+            System.out.println("DEBUG: [" + java.time.LocalTime.now() + "] Creating new socket to " + serverHost + ":" + serverPort);
 
             // Create new socket
             socket = new Socket();
@@ -321,16 +329,21 @@ public class ClientConnection {
                           ProtocolConstants.CONNECTION_TIMEOUT_MS);
             socket.setSoTimeout(ProtocolConstants.READ_TIMEOUT_MS);
 
+            System.out.println("DEBUG: [" + java.time.LocalTime.now() + "] Socket connected, setting up streams...");
+
             // Setup streams
             out = new PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8);
             in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+
+            System.out.println("DEBUG: [" + java.time.LocalTime.now() + "] Sending RECONNECT " + clientId);
 
             // Send RECONNECT command
             out.println("RECONNECT " + clientId);
 
             // Wait for response
+            System.out.println("DEBUG: [" + java.time.LocalTime.now() + "] Waiting for RECONNECT response...");
             String response = in.readLine();
-            System.out.println("Reconnect response: " + response);
+            System.out.println("DEBUG: [" + java.time.LocalTime.now() + "] Reconnect response: " + response);
 
             if (response != null && response.startsWith("WELCOME")) {
                 // Reconnect successful, restart reader thread
@@ -347,6 +360,18 @@ public class ClientConnection {
                 reconnecting = false;
                 System.out.println("Reconnect successful!");
                 return true;
+            } else if (response != null && response.contains("already connected")) {
+                // Server says we're already connected - previous reconnect must have succeeded
+                // This is a race condition where we sent multiple RECONNECT before getting WELCOME
+                System.out.println("Server reports already connected - assuming previous reconnect succeeded");
+                cleanup();
+                reconnecting = false;
+                autoReconnect = false;  // DISABLE auto-reconnect to stop the loop
+
+                if (listener != null) {
+                    listener.onDisconnected("Already connected on another session. Please close other clients and reconnect.");
+                }
+                return false;
             } else if (response != null && response.contains("Client not found") ||
                       (response != null && response.contains("session expired"))) {
                 // Client was removed from server after long disconnect timeout

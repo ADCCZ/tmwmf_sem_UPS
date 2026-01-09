@@ -1,15 +1,20 @@
 #include "room.h"
 #include "logger.h"
 #include "protocol.h"
+#include "game.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
 
 static room_t **rooms = NULL;
 static int max_rooms = 0;
 static int next_room_id = 1;
 static pthread_mutex_t rooms_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Forward declaration for internal broadcast function
+static void room_broadcast_except_locked(room_t *room, const char *message, client_t *exclude_client);
 
 int room_system_init(int max_rooms_count) {
     pthread_mutex_lock(&rooms_mutex);
@@ -29,20 +34,33 @@ int room_system_init(int max_rooms_count) {
 }
 
 void room_system_shutdown(void) {
-    pthread_mutex_lock(&rooms_mutex);
+    // No mutex needed during shutdown - all other threads are already terminated
+    // (PING and timeout_checker joined, handler threads had 3s to finish)
+    logger_log(LOG_INFO, "Room system shutdown starting");
 
     if (rooms != NULL) {
         for (int i = 0; i < max_rooms; i++) {
             if (rooms[i] != NULL) {
-                room_destroy(rooms[i]);
+                room_t *room = rooms[i];
+
+                // Clear player references (inline, no need for room_destroy)
+                for (int j = 0; j < MAX_PLAYERS_PER_ROOM; j++) {
+                    if (room->players[j] != NULL) {
+                        room->players[j]->room = NULL;
+                        room->players[j]->state = STATE_IN_LOBBY;
+                    }
+                }
+
+                logger_log(LOG_INFO, "Room %d destroyed during shutdown", room->room_id);
+                free(room);
+                rooms[i] = NULL;
             }
         }
         free(rooms);
         rooms = NULL;
     }
 
-    pthread_mutex_unlock(&rooms_mutex);
-    logger_log(LOG_INFO, "Room system shutdown");
+    logger_log(LOG_INFO, "Room system shutdown complete");
 }
 
 room_t* room_create(const char *name, int max_players, int board_size, client_t *owner) {
@@ -177,34 +195,193 @@ int room_remove_player(room_t *room, client_t *client) {
         return -1;
     }
 
+    logger_log(LOG_INFO, "DEBUG: room_remove_player ENTRY - room=%d, client=%d (%s), player_count=%d, game=%p",
+              room->room_id, client->client_id, client->nickname, room->player_count, (void*)room->game);
+
     pthread_mutex_lock(&rooms_mutex);
+
+    // Check if this client is the owner
+    int was_owner = (room->owner == client);
 
     // Find and remove player
     for (int i = 0; i < MAX_PLAYERS_PER_ROOM; i++) {
         if (room->players[i] == client) {
+            logger_log(LOG_INFO, "DEBUG: Found player at index %d, removing...", i);
             room->players[i] = NULL;
             room->player_count--;
             client->room = NULL;
             client->state = STATE_IN_LOBBY;
 
-            logger_log(LOG_INFO, "Client %d (%s) left room %d",
-                       client->client_id, client->nickname, room->room_id);
+            logger_log(LOG_INFO, "Client %d (%s) left room %d%s (player_count now: %d)",
+                       client->client_id, client->nickname, room->room_id,
+                       was_owner ? " (was owner)" : "", room->player_count);
 
-            // If room is empty, destroy it
-            if (room->player_count == 0) {
-                logger_log(LOG_INFO, "Room %d is empty, destroying", room->room_id);
+            // Check if we need to cancel the game (not enough players left)
+            if (room->game != NULL && room->player_count < 2) {
+                logger_log(LOG_INFO, "Room %d: Not enough players (%d) to continue game, forfeit win for highest scorer",
+                          room->room_id, room->player_count);
 
-                // Find room in array and set to NULL
-                for (int j = 0; j < max_rooms; j++) {
-                    if (rooms[j] == room) {
-                        rooms[j] = NULL;
+                game_t *game = (game_t *)room->game;
+
+                // Give forfeit win to player(s) with highest score
+                int remaining_pairs = game->total_pairs - game->matched_pairs;
+
+                // Find highest score among remaining players (excluding who left)
+                int highest_score = -1;
+                int winner_count = 0;
+
+                for (int k = 0; k < game->player_count; k++) {
+                    if (game->players[k] != NULL && game->players[k] != client) {
+                        if (game->player_scores[k] > highest_score) {
+                            highest_score = game->player_scores[k];
+                            winner_count = 1;
+                        } else if (game->player_scores[k] == highest_score) {
+                            winner_count++;
+                        }
+                    }
+                }
+
+                // Distribute remaining pairs to player(s) with highest score
+                if (winner_count > 0 && remaining_pairs > 0) {
+                    int bonus_per_winner = remaining_pairs / winner_count;
+                    int extra_pairs = remaining_pairs % winner_count;
+
+                    for (int k = 0; k < game->player_count; k++) {
+                        if (game->players[k] != NULL && game->players[k] != client) {
+                            if (game->player_scores[k] == highest_score) {
+                                game->player_scores[k] += bonus_per_winner;
+                                if (extra_pairs > 0) {
+                                    game->player_scores[k]++;
+                                    extra_pairs--;
+                                }
+                                logger_log(LOG_INFO, "Room %d: Player %s (highest score) gets forfeit bonus (new score: %d)",
+                                          room->room_id, game->players[k]->nickname, game->player_scores[k]);
+                            }
+                        }
+                    }
+                }
+
+                // Build GAME_END_FORFEIT message with final scores (auto-return to lobby, no dialog)
+                char game_cancel_msg[MAX_MESSAGE_LENGTH];
+                int offset = snprintf(game_cancel_msg, sizeof(game_cancel_msg), "GAME_END_FORFEIT");
+
+                for (int k = 0; k < game->player_count; k++) {
+                    if (game->players[k] != NULL) {
+                        offset += snprintf(game_cancel_msg + offset, sizeof(game_cancel_msg) - offset,
+                                          " %s %d", game->players[k]->nickname, game->player_scores[k]);
+                    }
+                }
+
+                // Notify remaining players (use _locked version - mutex already held)
+                room_broadcast_except_locked(room, game_cancel_msg, NULL);
+
+                logger_log(LOG_INFO, "Room %d: Game ended by forfeit - sent final scores to remaining players", room->room_id);
+
+                // Clean up game
+                game_destroy(game);
+                room->game = NULL;
+                room->state = ROOM_STATE_WAITING;
+
+                // Store room_id for logging
+                int forfeit_room_id = room->room_id;
+
+                // Collect remaining players - they will be removed from room (go to lobby)
+                // Since GAME_END_FORFEIT was sent, clients expect to return to lobby automatically
+                client_t *remaining_players[MAX_PLAYERS_PER_ROOM];
+                int remaining_count = 0;
+
+                for (int j = 0; j < MAX_PLAYERS_PER_ROOM; j++) {
+                    if (room->players[j] != NULL) {
+                        remaining_players[remaining_count++] = room->players[j];
+                        // Set state to lobby BEFORE unlocking mutex
+                        room->players[j]->state = STATE_IN_LOBBY;
+                        room->players[j]->room = NULL;
+                        room->players[j] = NULL;  // Clear from room array
+                        logger_log(LOG_INFO, "Room %d: Player %s removed from room (forfeit, going to lobby)",
+                                  forfeit_room_id, remaining_players[remaining_count - 1]->nickname);
+                    }
+                }
+
+                // Room is now empty
+                room->player_count = 0;
+
+                logger_log(LOG_INFO, "DEBUG: Room %d is now empty after forfeit, will be destroyed", forfeit_room_id);
+
+                // Unlock mutex and destroy room
+                pthread_mutex_unlock(&rooms_mutex);
+                room_destroy(room);
+
+                logger_log(LOG_INFO, "DEBUG: Room %d destroyed after forfeit (LEAVE_ROOM)", forfeit_room_id);
+                return 0;
+            }
+
+            // If owner left and room still has players, transfer ownership or destroy room
+            if (was_owner && room->player_count > 0) {
+                // Find first remaining player and make them owner
+                for (int j = 0; j < MAX_PLAYERS_PER_ROOM; j++) {
+                    if (room->players[j] != NULL && !room->players[j]->is_disconnected) {
+                        room->owner = room->players[j];
+                        logger_log(LOG_INFO, "Room %d: Ownership transferred to %s",
+                                  room->room_id, room->owner->nickname);
+
+                        // Notify all players about ownership change (use _locked version - mutex already held)
+                        char ownership_msg[MAX_MESSAGE_LENGTH];
+                        snprintf(ownership_msg, sizeof(ownership_msg),
+                                "ROOM_OWNER_CHANGED %s", room->owner->nickname);
+                        room_broadcast_except_locked(room, ownership_msg, NULL);
                         break;
                     }
                 }
 
-                free(room);
+                // If no connected player found (all disconnected), destroy room
+                if (room->owner == client) {
+                    logger_log(LOG_INFO, "Room %d: Owner left and no connected players remain, destroying room",
+                              room->room_id);
+
+                    // Store room_id before destroy
+                    int room_id = room->room_id;
+
+                    // Notify remaining (disconnected) players (use _locked version - mutex already held)
+                    char room_closed_msg[MAX_MESSAGE_LENGTH];
+                    snprintf(room_closed_msg, sizeof(room_closed_msg),
+                            "ROOM_CLOSED Owner left");
+                    room_broadcast_except_locked(room, room_closed_msg, NULL);
+
+                    // Remove all players from room
+                    for (int j = 0; j < MAX_PLAYERS_PER_ROOM; j++) {
+                        if (room->players[j] != NULL) {
+                            room->players[j]->room = NULL;
+                            room->players[j]->state = STATE_IN_LOBBY;
+                        }
+                    }
+
+                    pthread_mutex_unlock(&rooms_mutex);
+                    room_destroy(room);
+                    logger_log(LOG_INFO, "Room %d destroyed after owner left", room_id);
+                    return 0;
+                }
             }
 
+            // If room is empty, destroy it using room_destroy()
+            // IMPORTANT: Do NOT free() inline to prevent double-free
+            if (room->player_count == 0) {
+                logger_log(LOG_INFO, "DEBUG: Room %d is empty (player_count=0), destroying", room->room_id);
+
+                // Store room_id before destroy (for logging after unlock)
+                int room_id = room->room_id;
+
+                // Unlock mutex before calling room_destroy (it will lock again)
+                pthread_mutex_unlock(&rooms_mutex);
+
+                // Call proper destroy function (handles removal from array + free)
+                room_destroy(room);
+
+                logger_log(LOG_INFO, "DEBUG: Room %d destroyed after last player left", room_id);
+                return 0;
+            }
+
+            logger_log(LOG_INFO, "DEBUG: room_remove_player EXIT - room=%d still has %d players",
+                      room->room_id, room->player_count);
             pthread_mutex_unlock(&rooms_mutex);
             return 0;
         }
@@ -309,6 +486,19 @@ int room_get_list_message(char *buffer, int buffer_size) {
     return offset;
 }
 
+// Internal function: broadcast without locking (assumes mutex is already held)
+static void room_broadcast_except_locked(room_t *room, const char *message, client_t *exclude_client) {
+    if (room == NULL || message == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < MAX_PLAYERS_PER_ROOM; i++) {
+        if (room->players[i] != NULL && room->players[i] != exclude_client) {
+            client_send_message(room->players[i], message);
+        }
+    }
+}
+
 void room_broadcast(room_t *room, const char *message) {
     room_broadcast_except(room, message, NULL);
 }
@@ -319,12 +509,6 @@ void room_broadcast_except(room_t *room, const char *message, client_t *exclude_
     }
 
     pthread_mutex_lock(&rooms_mutex);
-
-    for (int i = 0; i < MAX_PLAYERS_PER_ROOM; i++) {
-        if (room->players[i] != NULL && room->players[i] != exclude_client) {
-            client_send_message(room->players[i], message);
-        }
-    }
-
+    room_broadcast_except_locked(room, message, exclude_client);
     pthread_mutex_unlock(&rooms_mutex);
 }

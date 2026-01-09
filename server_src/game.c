@@ -101,10 +101,63 @@ void game_destroy(game_t *game) {
 
     if (game->cards != NULL) {
         free(game->cards);
+        game->cards = NULL;  // Prevent use-after-free (defensive)
     }
 
     free(game);
+    // NOTE: Caller MUST set their game pointer to NULL after calling this
     logger_log(LOG_INFO, "Game destroyed");
+}
+
+int game_remove_player(game_t *game, client_t *client) {
+    if (game == NULL || client == NULL) {
+        return -1;
+    }
+
+    // Find player in game
+    int player_index = -1;
+    for (int i = 0; i < game->player_count; i++) {
+        if (game->players[i] == client) {
+            player_index = i;
+            break;
+        }
+    }
+
+    if (player_index == -1) {
+        logger_log(LOG_WARNING, "Player %s not found in game", client->nickname);
+        return -1;
+    }
+
+    logger_log(LOG_INFO, "Removing player %s from game (index %d)",
+              client->nickname, player_index);
+
+    // Shift remaining players down
+    for (int i = player_index; i < game->player_count - 1; i++) {
+        game->players[i] = game->players[i + 1];
+        game->player_scores[i] = game->player_scores[i + 1];
+        game->player_ready[i] = game->player_ready[i + 1];
+    }
+
+    // Clear last slot
+    game->players[game->player_count - 1] = NULL;
+    game->player_scores[game->player_count - 1] = 0;
+    game->player_ready[game->player_count - 1] = 0;
+
+    // Decrease count
+    game->player_count--;
+
+    // Adjust current_player_index if needed
+    if (game->current_player_index >= game->player_count) {
+        game->current_player_index = 0;  // Wrap around to first player
+    } else if (game->current_player_index > player_index) {
+        // If current player was after removed player, shift index down
+        game->current_player_index--;
+    }
+
+    logger_log(LOG_INFO, "Player removed, %d players remain, current_player_index=%d",
+              game->player_count, game->current_player_index);
+
+    return 0;
 }
 
 int game_player_ready(game_t *game, client_t *client) {

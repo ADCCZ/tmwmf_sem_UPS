@@ -34,6 +34,13 @@ int client_list_add(client_t *client);
 void client_list_remove(client_t *client);
 
 /**
+ * Replace old client with new client in-place (for reconnection)
+ * @param old_client Client to replace
+ * @param new_client Client to put in place of old one
+ */
+void client_list_replace(client_t *old_client, client_t *new_client);
+
+/**
  * Get all active clients
  * @param clients Output array (must be allocated by caller)
  * @param max_count Size of output array

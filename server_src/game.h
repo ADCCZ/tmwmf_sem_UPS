@@ -64,6 +64,14 @@ game_t* game_create(int board_size, client_t **players, int player_count);
 void game_destroy(game_t *game);
 
 /**
+ * Remove a player from an active game (when they disconnect)
+ * @param game Game
+ * @param client Player to remove
+ * @return 0 on success, -1 on error
+ */
+int game_remove_player(game_t *game, client_t *client);
+
+/**
  * Mark a player as ready
  * @param game Game
  * @param client Player

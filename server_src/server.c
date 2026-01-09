@@ -92,7 +92,7 @@ int server_init(const char *ip, int port, int max_rooms, int max_clients) {
         return -1;
     }
 
-    // Start PING thread
+    // Start PING thread (DON'T detach - we need to join on shutdown)
     int result = pthread_create(&ping_thread, NULL, ping_thread_func, NULL);
     if (result != 0) {
         logger_log(LOG_ERROR, "Failed to create PING thread: %s", strerror(result));
@@ -101,10 +101,9 @@ int server_init(const char *ip, int port, int max_rooms, int max_clients) {
         close(server_config.listen_fd);
         return -1;
     }
-    pthread_detach(ping_thread);
     logger_log(LOG_INFO, "PING thread started");
 
-    // Start timeout checker thread
+    // Start timeout checker thread (DON'T detach - we need to join on shutdown)
     result = pthread_create(&timeout_thread, NULL, timeout_checker_thread_func, NULL);
     if (result != 0) {
         logger_log(LOG_ERROR, "Failed to create timeout checker thread: %s", strerror(result));
@@ -113,7 +112,6 @@ int server_init(const char *ip, int port, int max_rooms, int max_clients) {
         close(server_config.listen_fd);
         return -1;
     }
-    pthread_detach(timeout_thread);
     logger_log(LOG_INFO, "Timeout checker thread started");
 
     logger_log(LOG_INFO, "Server initialized: %s:%d (max_rooms=%d, max_clients=%d)",
@@ -214,11 +212,38 @@ void server_shutdown(void) {
     // Give messages time to be sent before closing connections
     sleep(1);
 
-    // Shutdown client list
-    client_list_shutdown();
+    // Force close all client sockets to make handler threads exit quickly
+    logger_log(LOG_INFO, "Closing all client connections...");
+    count = client_list_get_all(clients, server_config.max_clients);
+    for (int i = 0; i < count; i++) {
+        if (clients[i] != NULL && clients[i]->socket_fd >= 0) {
+            shutdown(clients[i]->socket_fd, SHUT_RDWR);
+            logger_log(LOG_INFO, "Client %d: Socket shutdown for forced disconnect", clients[i]->client_id);
+        }
+    }
 
-    // Shutdown room system
+    // Wait for PING and timeout checker threads to finish FIRST
+    // This prevents double-free when timeout checker tries to free clients
+    logger_log(LOG_INFO, "Waiting for PING thread to finish...");
+    pthread_join(ping_thread, NULL);
+    logger_log(LOG_INFO, "PING thread joined");
+
+    logger_log(LOG_INFO, "Waiting for timeout checker thread to finish...");
+    pthread_join(timeout_thread, NULL);
+    logger_log(LOG_INFO, "Timeout checker thread joined");
+
+    // Wait for handler threads to finish (they are detached, so give them time)
+    // Wait AFTER joining PING/timeout threads to ensure all client processing is done
+    logger_log(LOG_INFO, "Waiting for handler threads to finish...");
+    sleep(3);  // Increased to 3 seconds to ensure all handler threads exit
+
+    // Shutdown room system FIRST (it accesses client pointers)
+    logger_log(LOG_INFO, "Shutting down room system...");
     room_system_shutdown();
+    logger_log(LOG_INFO, "Room system shutdown complete");
+
+    // NOW it's safe to shutdown client list (no threads accessing it, rooms cleared)
+    client_list_shutdown();
 
     if (server_config.listen_fd >= 0) {
         close(server_config.listen_fd);
@@ -255,12 +280,7 @@ static void* ping_thread_func(void *arg) {
         for (int i = 0; i < count; i++) {
             client_t *client = clients[i];
 
-            // Skip zombie clients (being freed after reconnect)
-            if (client->socket_fd == -2) {
-                continue;
-            }
-
-            if (client->state >= STATE_AUTHENTICATED && !client->is_disconnected) {
+            if (client->state >= STATE_AUTHENTICATED && !client->is_disconnected && client->socket_fd >= 0) {
                 // Check if we're not waiting for PONG
                 if (!client->waiting_for_pong) {
                     // Check if enough time has passed since last PONG
@@ -311,108 +331,32 @@ static void* timeout_checker_thread_func(void *arg) {
                 continue;
             }
 
-            // Free zombie clients (marked during reconnect)
-            // Must remove from list AND free memory
-            if (client->socket_fd == -2) {
-                logger_log(LOG_INFO, "Client %d: Freeing zombie client after reconnect",
-                          client->client_id);
-
-                // Clear ALL pointers to this client in the snapshot array (in case it appears multiple times)
-                client_t *zombie = client;
-                for (int j = 0; j < count; j++) {
-                    if (clients[j] == zombie) {
-                        clients[j] = NULL;
-                    }
-                }
-
-                // Remove from list (now safe since reconnection is complete)
-                client_list_remove(zombie);
-                free(zombie);
+            // Skip invalid/zombie clients
+            // (socket_fd == -1 means disconnected/closed)
+            // (socket_fd < -1 means being freed or invalid)
+            if (client->socket_fd < -1) {
                 continue;
             }
 
-            // Check for disconnected players waiting for reconnection
-            if (client->is_disconnected) {
-                time_t disconnect_duration = now - client->disconnect_time;
-
-                if (disconnect_duration >= SHORT_DISCONNECT_TIMEOUT) {
-                    logger_log(LOG_WARNING, "Client %d (%s) reconnect timeout expired after %ld seconds",
-                              client->client_id, client->nickname, disconnect_duration);
-
-                    // Notify other players about LONG disconnect
-                    if (client->room != NULL) {
-                        room_t *room = client->room;
-
-                        char broadcast[MAX_MESSAGE_LENGTH];
-                        snprintf(broadcast, sizeof(broadcast), "PLAYER_DISCONNECTED %s LONG", client->nickname);
-                        room_broadcast_except(room, broadcast, client);
-
-                        // End the game since player didn't reconnect (if game exists)
-                        if (room->game != NULL) {
-                            logger_log(LOG_INFO, "Room %d: Ending game due to player %s disconnect timeout",
-                                      room->room_id, client->nickname);
-
-                            // Broadcast game end due to disconnect
-                            char game_end_msg[MAX_MESSAGE_LENGTH];
-                            snprintf(game_end_msg, sizeof(game_end_msg),
-                                    "GAME_END DISCONNECT Player %s did not reconnect", client->nickname);
-                            room_broadcast(room, game_end_msg);
-
-                            // Clean up game
-                            game_destroy((game_t *)room->game);
-                            room->game = NULL;
-                            room->state = ROOM_STATE_FINISHED;
-
-                            // Return remaining players to lobby (before removing disconnected player)
-                            for (int j = 0; j < MAX_PLAYERS_PER_ROOM; j++) {
-                                if (room->players[j] != NULL && room->players[j] != client) {
-                                    room->players[j]->room = NULL;
-                                    room->players[j]->state = STATE_IN_LOBBY;
-                                    // IMPORTANT: Reset is_disconnected flag to prevent processing them again in this timeout check
-                                    room->players[j]->is_disconnected = 0;
-                                    logger_log(LOG_INFO, "Client %d (%s) returned to lobby after game end (disconnect)",
-                                               room->players[j]->client_id, room->players[j]->nickname);
-                                }
-                            }
-                        } else {
-                            // No game yet - just notify about leaving
-                            logger_log(LOG_INFO, "Room %d: Player %s disconnect timeout (no active game)",
-                                      room->room_id, client->nickname);
-                        }
-
-                        // Remove disconnected player from room
-                        // NOTE: room_remove_player will auto-destroy room if it becomes empty
-                        room_remove_player(room, client);
-                    }
-
-                    // Remove client from list and free
-                    client_list_remove(client);
-
-                    // Clear ALL pointers to this client in the snapshot array (in case it appears multiple times)
-                    client_t *timeout_client = client;
-                    for (int j = 0; j < count; j++) {
-                        if (clients[j] == timeout_client) {
-                            clients[j] = NULL;
-                        }
-                    }
-
-                    free(timeout_client);
-                }
-                continue;
-            }
-
-            // Only check authenticated clients with valid socket (skip disconnected)
-            if (client->state >= STATE_AUTHENTICATED && client->socket_fd >= 0 && !client->is_disconnected) {
+            // Only check authenticated clients with valid socket
+            if (client->state >= STATE_AUTHENTICATED && client->socket_fd >= 0) {
                 // Check if client hasn't responded to PING within PONG_TIMEOUT
                 if (client->waiting_for_pong) {
                     time_t ping_wait_time = now - client->last_ping_time;
 
                     if (ping_wait_time > PONG_TIMEOUT) {
-                        logger_log(LOG_WARNING, "Client %d (%s) didn't respond to PING within %d seconds",
+                        logger_log(LOG_WARNING, "DEBUG: Client %d (%s) didn't respond to PING within %d seconds",
                                   client->client_id, client->nickname, PONG_TIMEOUT);
 
-                        // Use shutdown() instead of close() to avoid closing recycled FDs
-                        // This makes recv() return 0, triggering client_handler cleanup
+                        // Mark client as disconnected for reconnect instead of immediate cleanup
+                        if (!client->is_disconnected) {
+                            client->is_disconnected = 1;
+                            client->disconnect_time = now;
+                            logger_log(LOG_INFO, "DEBUG: Client %d (%s) marked as disconnected due to PONG timeout, will wait %ds for reconnect",
+                                      client->client_id, client->nickname, RECONNECT_TIMEOUT);
+                        }
+
+                        // Close socket to trigger cleanup (but keep client in list)
                         int fd = client->socket_fd;
                         if (fd >= 0) {
                             shutdown(fd, SHUT_RDWR);
@@ -436,6 +380,113 @@ static void* timeout_checker_thread_func(void *arg) {
                         shutdown(fd, SHUT_RDWR);
                         client->socket_fd = -1;  // Mark as closed
                     }
+                }
+            }
+
+            // Check for disconnected players waiting for reconnect
+            if (client->is_disconnected && client->socket_fd == -1) {
+                time_t disconnect_duration = now - client->disconnect_time;
+
+                // Log every 10 seconds to show progress
+                if (disconnect_duration % 10 == 0 && disconnect_duration > 0) {
+                    logger_log(LOG_INFO, "DEBUG: Client %d (%s) waiting for reconnect: %ld/%d seconds",
+                              client->client_id, client->nickname, disconnect_duration, RECONNECT_TIMEOUT);
+                }
+
+                if (disconnect_duration > RECONNECT_TIMEOUT) {
+                    logger_log(LOG_WARNING, "DEBUG: Client %d (%s) reconnect timeout expired (%ld seconds), ending game with forfeit",
+                              client->client_id, client->nickname, disconnect_duration);
+
+                    // Get room and game
+                    room_t *room = client->room;
+                    if (room != NULL && room->game != NULL) {
+                        game_t *game = room->game;
+                        int room_id = room->room_id;
+
+                        // Give forfeit win to player(s) with highest score
+                        int remaining_pairs = game->total_pairs - game->matched_pairs;
+
+                        // Find highest score among remaining players (exclude disconnected client)
+                        int highest_score = -1;
+                        int winner_count = 0;
+
+                        for (int j = 0; j < game->player_count; j++) {
+                            if (game->players[j] != NULL && game->players[j] != client) {
+                                if (game->player_scores[j] > highest_score) {
+                                    highest_score = game->player_scores[j];
+                                    winner_count = 1;
+                                } else if (game->player_scores[j] == highest_score) {
+                                    winner_count++;
+                                }
+                            }
+                        }
+
+                        // Distribute remaining pairs to winner(s)
+                        if (winner_count > 0 && remaining_pairs > 0) {
+                            int bonus_per_winner = remaining_pairs / winner_count;
+                            int extra_pairs = remaining_pairs % winner_count;
+
+                            for (int j = 0; j < game->player_count; j++) {
+                                if (game->players[j] != NULL && game->players[j] != client) {
+                                    if (game->player_scores[j] == highest_score) {
+                                        game->player_scores[j] += bonus_per_winner;
+                                        if (extra_pairs > 0) {
+                                            game->player_scores[j]++;
+                                            extra_pairs--;
+                                        }
+                                        logger_log(LOG_INFO, "Room %d: Player %s gets forfeit bonus (new score: %d)",
+                                                  room_id, game->players[j]->nickname, game->player_scores[j]);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Build GAME_END_FORFEIT message
+                        char game_end_msg[MAX_MESSAGE_LENGTH];
+                        int offset = snprintf(game_end_msg, sizeof(game_end_msg), "GAME_END_FORFEIT");
+
+                        for (int j = 0; j < game->player_count; j++) {
+                            if (game->players[j] != NULL) {
+                                offset += snprintf(game_end_msg + offset, sizeof(game_end_msg) - offset,
+                                                  " %s %d", game->players[j]->nickname, game->player_scores[j]);
+                            }
+                        }
+
+                        // Broadcast game end to remaining players
+                        room_broadcast_except(room, game_end_msg, client);
+
+                        logger_log(LOG_INFO, "Room %d: Game ended by forfeit (reconnect timeout)", room_id);
+
+                        // Clean up game
+                        game_destroy(game);
+                        room->game = NULL;
+                        room->state = ROOM_STATE_WAITING;
+
+                        // Remove all players from room inline
+                        for (int j = 0; j < MAX_PLAYERS_PER_ROOM; j++) {
+                            if (room->players[j] != NULL) {
+                                room->players[j]->room = NULL;
+                                room->players[j]->state = STATE_IN_LOBBY;
+                                room->players[j] = NULL;
+                                logger_log(LOG_INFO, "Player removed from room after forfeit timeout");
+                            }
+                        }
+                        room->player_count = 0;
+
+                        logger_log(LOG_INFO, "Room %d is now empty after forfeit, destroying", room_id);
+
+                        // Destroy the room
+                        room_destroy(room);
+                    }
+
+                    // Clean up disconnected client
+                    logger_log(LOG_INFO, "Client %d (%s) cleaned up after reconnect timeout",
+                              client->client_id, client->nickname);
+                    client_list_remove(client);
+                    free(client);
+
+                    // Mark as NULL in local array to prevent double-free if client appears multiple times
+                    clients[i] = NULL;
                 }
             }
         }

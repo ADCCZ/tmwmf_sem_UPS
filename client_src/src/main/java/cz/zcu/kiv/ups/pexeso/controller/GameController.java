@@ -402,6 +402,14 @@ public class GameController implements MessageListener {
                 }
                 break;
 
+            case "ROOM_OWNER_CHANGED":
+                // Format: ROOM_OWNER_CHANGED <new_owner_nickname>
+                if (parts.length > 1) {
+                    String newOwner = parts[1];
+                    handleOwnerChanged(newOwner);
+                }
+                break;
+
             case "PLAYER_DISCONNECTED":
                 // Format: PLAYER_DISCONNECTED <nickname> SHORT|LONG
                 if (parts.length >= 3) {
@@ -499,7 +507,11 @@ public class GameController implements MessageListener {
                 break;
 
             case "GAME_END":
-                handleGameEnd(message);
+                handleGameEnd(message, false);
+                break;
+
+            case "GAME_END_FORFEIT":
+                handleGameEnd(message, true);
                 break;
 
             case "LEFT_ROOM":
@@ -643,11 +655,21 @@ public class GameController implements MessageListener {
         }
     }
 
-    private void handleGameEnd(String message) {
+    private void handleGameEnd(String message, boolean forfeit) {
         // Format: GAME_END <player1> <score1> <player2> <score2> ...
+        // or: GAME_END_FORFEIT <player1> <score1> <player2> <score2> ...
         String[] parts = message.split(" ");
 
-        StringBuilder resultMsg = new StringBuilder("Game Over!\n\nFinal Scores:\n");
+        StringBuilder resultMsg = new StringBuilder();
+
+        if (forfeit) {
+            resultMsg.append("Game Over - Forfeit!\n\n");
+            resultMsg.append("A player disconnected.\n\n");
+            resultMsg.append("Final Scores:\n");
+        } else {
+            resultMsg.append("Game Over!\n\nFinal Scores:\n");
+        }
+
         int maxScore = -1;
         List<String> winners = new ArrayList<>();
 
@@ -674,21 +696,40 @@ public class GameController implements MessageListener {
         String finalMsg = resultMsg.toString();
 
         Platform.runLater(() -> {
+            // Show game results
             Alert alert = new Alert(Alert.AlertType.INFORMATION);
-            alert.setTitle("Game Over");
+            if (forfeit) {
+                alert.setTitle("Game Over - Forfeit");
+            } else {
+                alert.setTitle("Game Over");
+            }
             alert.setHeaderText(null);
             alert.setContentText(finalMsg);
             alert.showAndWait();
 
-            // Ask if player wants to return to lobby
-            Alert lobbyAlert = new Alert(Alert.AlertType.CONFIRMATION);
-            lobbyAlert.setTitle("Return to Lobby");
-            lobbyAlert.setHeaderText("Game finished!");
-            lobbyAlert.setContentText("Return to lobby?");
+            // Automatically return to lobby without asking
+            System.out.println("Game ended - returning to lobby");
+            returnToLobby();
+        });
+    }
 
-            Optional<ButtonType> result = lobbyAlert.showAndWait();
-            if (result.isPresent() && result.get() == ButtonType.OK) {
-                returnToLobby();
+    private void handleOwnerChanged(String newOwnerNickname) {
+        // Check if this client is the new owner
+        boolean amINewOwner = newOwnerNickname.equals(this.nickname);
+
+        this.isOwner = amINewOwner;
+
+        Platform.runLater(() -> {
+            if (amINewOwner) {
+                // I became the owner - show Start button
+                startGameButton.setVisible(true);
+                updateStatus("You are now the room owner. Start the game when ready.");
+                System.out.println("GameController: I became the new room owner");
+            } else {
+                // Someone else is the owner - hide Start button
+                startGameButton.setVisible(false);
+                updateStatus(newOwnerNickname + " is now the room owner.");
+                System.out.println("GameController: " + newOwnerNickname + " is now the room owner");
             }
         });
     }
@@ -781,12 +822,12 @@ public class GameController implements MessageListener {
 
         Platform.runLater(() -> {
             if ("SHORT".equals(disconnectType)) {
-                updateStatus(playerName + " disconnected - waiting for reconnect (120s)");
+                updateStatus(playerName + " disconnected - waiting for reconnect (90s)");
                 // Show warning but don't remove player from list
                 Alert alert = new Alert(Alert.AlertType.WARNING);
                 alert.setTitle("Player Disconnected");
                 alert.setHeaderText(playerName + " lost connection");
-                alert.setContentText("Waiting up to 120 seconds for reconnection. Game is paused.");
+                alert.setContentText("Waiting up to 90 seconds for reconnection. Game is paused.");
                 alert.show(); // Non-blocking
             } else if ("LONG".equals(disconnectType)) {
                 updateStatus(playerName + " disconnected permanently - game may end");

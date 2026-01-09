@@ -27,7 +27,18 @@
       "Bash(powershell.exe -Command \"cd D:\\ZCU\\UPS\\tmwmf_sem_UPS\\client_src; Start-Sleep -Seconds 2; mvn compile\")",
       "Bash(powershell.exe -Command \"cd D:\\ZCU\\UPS\\tmwmf_sem_UPS\\client_src; (Get-Item ''src\\main\\java\\cz\\zcu\\kiv\\ups\\pexeso\\controller\\LobbyController.java'').LastWriteTime = Get-Date; mvn compile\")",
       "Bash(powershell.exe:*)",
-      "Bash(cmd /c \"cd D:\\ZCU\\UPS\\tmwmf_sem_UPS\\server_src && del /f server 2>nul & echo Done\")"
+      "Bash(cmd /c \"cd D:\\ZCU\\UPS\\tmwmf_sem_UPS\\server_src && del /f server 2>nul & echo Done\")",
+      "Bash(wsl --list:*)",
+      "Bash(wsl hostname:*)",
+      "Bash(wsl python3:*)",
+      "Bash(python test_reconnect.py:*)",
+      "Bash(python test_double_free_fix.py:*)",
+      "Bash(python test_intcptor.py:*)",
+      "Bash(wsl cd /mnt/d/ZCU/UPS/tmwmf_sem_UPS/server_src)",
+      "Bash(wsl make:*)",
+      "Bash(wsl make)",
+      "Bash(wsl \"cd /mnt/d/ZCU/UPS/tmwmf_sem_UPS/server_src && make clean && make\")",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

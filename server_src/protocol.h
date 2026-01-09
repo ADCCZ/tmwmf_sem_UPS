@@ -14,8 +14,7 @@
 #define PING_INTERVAL 15           // Send PING every 15 seconds (deprecated, now using PONG_WAIT_INTERVAL)
 #define PONG_TIMEOUT 5             // Expect PONG within 5 seconds
 #define PONG_WAIT_INTERVAL 5       // Wait 5 seconds after PONG before sending next PING
-#define SHORT_DISCONNECT_TIMEOUT 120   // < 120s = short disconnect (reconnect possible)
-#define LONG_DISCONNECT_TIMEOUT 120    // >= 120s = long disconnect (player removed)
+#define RECONNECT_TIMEOUT 90       // Reconnect timeout: server waits 90s for client (client needs ~70s for 5 attempts)
 
 // Protocol commands (client to server)
 #define CMD_HELLO "HELLO"

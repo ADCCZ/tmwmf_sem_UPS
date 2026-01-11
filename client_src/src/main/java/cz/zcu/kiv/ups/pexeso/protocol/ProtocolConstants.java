@@ -60,7 +60,7 @@ public class ProtocolConstants {
     public static final int CONNECTION_TIMEOUT_MS = 5000;      // 5 seconds to connect
     public static final int READ_TIMEOUT_MS = 15000;           // 15 seconds read timeout (must be > PONG_WAIT_INTERVAL + safety margin)
     public static final int RECONNECT_INTERVAL_MS = 10000;     // 10 seconds between reconnect attempts
-    public static final int MAX_RECONNECT_ATTEMPTS = 5;        // 5 attempts = 50 seconds total (server waits 90s)
+    public static final int MAX_RECONNECT_ATTEMPTS = 7;        // 7 attempts = 70 seconds total (server waits 90s)
 
     private ProtocolConstants() {
         // Utility class - no instantiation

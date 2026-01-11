@@ -1,0 +1,59 @@
+===============================================================================
+  PEXESO - QUICK START GUIDE (Linux školní PC)
+===============================================================================
+
+▶ STAŽENÍ PROJEKTU
+  mkdir -p ~/ups_projekt && cd ~/ups_projekt
+  git clone https://github.com/ADCCZ/tmwmf_sem_UPS.git
+  cd tmwmf_sem_UPS
+
+▶ KOMPILACE SERVERU
+  cd server_src
+  make
+
+▶ KOMPILACE KLIENTA
+  cd ../client_src
+  mvn clean package
+
+▶ SPUŠTĚNÍ
+  # Terminál 1: Server
+  ./server_src/server 0.0.0.0 10000 10 50
+
+  # Terminál 2: Klient
+  java -jar client_src/target/pexeso-client-1.0-SNAPSHOT.jar
+
+▶ PŘIPOJENÍ V GUI
+  IP: 127.0.0.1
+  Port: 10000
+  Nickname: Alice
+
+===============================================================================
+  ŘEŠENÍ PROBLÉMŮ
+===============================================================================
+
+  ▶ "Address already in use"
+    sudo lsof -i :10000
+    kill -9 <PID>
+
+  ▶ Chybí gcc/make
+    sudo apt-get install build-essential
+
+  ▶ Chybí Maven
+    sudo apt-get install maven
+
+  ▶ Chybí Java 17
+    sudo apt-get install openjdk-17-jdk
+
+  ▶ Chybí CMake (pro InTCPtor)
+    sudo apt-get install cmake
+
+===============================================================================
+  DŮLEŽITÉ
+===============================================================================
+
+  ✅ PROTOKOL JE TEXTOVÝ (ASCII s \n na konci)
+  ✅ Server kompilovat s: make
+  ✅ Klient kompilovat s: mvn clean package
+  ✅ InTCPtor pouze na server (klient normálně)
+
+===============================================================================

@@ -282,11 +282,7 @@ static void handle_join_room(client_t *client, const char *params) {
 }
 
 static void handle_leave_room(client_t *client) {
-    logger_log(LOG_INFO, "DEBUG: handle_leave_room ENTRY - Client %d (%s), state=%d, room=%p",
-              client->client_id, client->nickname, client->state, (void*)client->room);
-
     if (client->room == NULL) {
-        logger_log(LOG_WARNING, "DEBUG: Client %d not in room, sending error", client->client_id);
         client_send_message(client, "ERROR NOT_IN_ROOM Not in a room");
         return;
     }
@@ -294,33 +290,21 @@ static void handle_leave_room(client_t *client) {
     room_t *room = client->room;
     int room_id = room->room_id;
 
-    logger_log(LOG_INFO, "DEBUG: Client %d leaving room %d, calling room_remove_player...",
-              client->client_id, room_id);
-
     // Remove player from room
     room_remove_player(room, client);
 
-    logger_log(LOG_INFO, "DEBUG: After room_remove_player - Client %d state=%d, room=%p",
-              client->client_id, client->state, (void*)client->room);
-
     // Send success response
-    logger_log(LOG_INFO, "DEBUG: Sending LEFT_ROOM response to client %d", client->client_id);
-    int send_result = client_send_message(client, "LEFT_ROOM");
-    logger_log(LOG_INFO, "DEBUG: LEFT_ROOM send result: %d", send_result);
+    client_send_message(client, "LEFT_ROOM");
 
     // Broadcast to other players (if room still exists)
     room = room_get_by_id(room_id);
     if (room != NULL) {
-        logger_log(LOG_INFO, "DEBUG: Room %d still exists, broadcasting PLAYER_LEFT", room_id);
         char broadcast[MAX_MESSAGE_LENGTH];
         snprintf(broadcast, sizeof(broadcast), "PLAYER_LEFT %s", client->nickname);
         room_broadcast(room, broadcast);
-    } else {
-        logger_log(LOG_INFO, "DEBUG: Room %d no longer exists (was destroyed)", room_id);
     }
 
-    logger_log(LOG_INFO, "DEBUG: handle_leave_room EXIT - Client %d (%s) left room %d successfully",
-              client->client_id, client->nickname, room_id);
+    logger_log(LOG_INFO, "Client %d (%s) left room %d", client->client_id, client->nickname, room_id);
 }
 
 static void handle_ready(client_t *client) {
@@ -584,9 +568,6 @@ static void handle_pong(client_t *client) {
 }
 
 static void handle_reconnect(client_t *new_client, const char *params) {
-    logger_log(LOG_INFO, "DEBUG: RECONNECT request from new client %d, params='%s'",
-              new_client->client_id, params ? params : "NULL");
-
     if (params == NULL) {
         client_send_message(new_client, "ERROR INVALID_PARAMS Missing client ID");
         return;
@@ -598,25 +579,19 @@ static void handle_reconnect(client_t *new_client, const char *params) {
         return;
     }
 
-    logger_log(LOG_INFO, "DEBUG: Looking for old client ID %d in client list", old_client_id);
-
     // Find old client by ID
     client_t *old_client = client_list_find_by_id(old_client_id);
     if (old_client == NULL) {
-        logger_log(LOG_WARNING, "DEBUG: Client %d: RECONNECT failed - client %d not found in list",
+        logger_log(LOG_WARNING, "Client %d: RECONNECT failed - client %d not found",
                   new_client->client_id, old_client_id);
         client_send_message(new_client, "ERROR Client not found or session expired");
         return;
     }
 
-    logger_log(LOG_INFO, "DEBUG: Found old client %d (%s), is_disconnected=%d, disconnect_time=%ld",
-              old_client_id, old_client->nickname, old_client->is_disconnected,
-              old_client->disconnect_time);
-
-    // CRITICAL: Reject reconnect if client is already connected
+    // Reject reconnect if client is already connected
     if (!old_client->is_disconnected && old_client->socket_fd >= 0) {
-        logger_log(LOG_WARNING, "Client %d: RECONNECT rejected - client %d is already connected (socket_fd=%d)",
-                  new_client->client_id, old_client_id, old_client->socket_fd);
+        logger_log(LOG_WARNING, "Client %d: RECONNECT rejected - client %d already connected",
+                  new_client->client_id, old_client_id);
         client_send_message(new_client, "ERROR Client is already connected");
         return;
     }
@@ -830,16 +805,7 @@ void* client_handler_thread(void *arg) {
     }
 
     // Cleanup - handle disconnection
-    // When player disconnects during game → immediate forfeit (no reconnect waiting)
-    // All other states (lobby, room waiting) → normal disconnect
-    logger_log(LOG_INFO, "DEBUG: Client %d (%s) disconnected - state=%d, STATE_IN_GAME=%d, room=%p, game=%p",
-              client->client_id, client->nickname, client->state,
-              STATE_IN_GAME, (void*)client->room,
-              client->room ? (void*)client->room->game : NULL);
-
     if (client->state == STATE_IN_GAME && client->room != NULL && client->room->game != NULL) {
-        logger_log(LOG_INFO, "DEBUG: GAME DISCONNECT - Client %d disconnected during active game",
-                  client->client_id);
 
         room_t *room = client->room;
         game_t *game = (game_t *)room->game;
@@ -895,10 +861,7 @@ void* client_handler_thread(void *arg) {
             return NULL;
 
         } else {
-            // Less than 2 players remain → mark disconnected and wait 60s for reconnect
-            logger_log(LOG_INFO, "DEBUG: Room %d: Only %d player(s) remain after disconnect, waiting %ds for reconnect",
-                      room_id, remaining_player_count, RECONNECT_TIMEOUT);
-
+            // Less than 2 players remain → mark disconnected and wait for reconnect
             // CRITICAL: Copy client_id and nickname BEFORE marking as disconnected
             // because handle_reconnect on another thread can free() this client immediately after
             int client_id = client->client_id;
@@ -915,20 +878,17 @@ void* client_handler_thread(void *arg) {
             int fd = client->socket_fd;
             if (fd >= 0) {
                 shutdown(fd, SHUT_RDWR);
-                client->socket_fd = -1;  // Mark socket as invalid
+                client->socket_fd = -1;
             }
 
-            logger_log(LOG_INFO, "DEBUG: Client %d (%s): Marked is_disconnected=1, disconnect_time=%ld, socket_fd=-1",
-                      client_id, nickname_copy, disconnect_time);
-
-            // Notify remaining players about SHORT disconnect (waiting for reconnect)
+            // Notify remaining players about disconnect (waiting for reconnect)
             char broadcast[MAX_MESSAGE_LENGTH];
             snprintf(broadcast, sizeof(broadcast),
                     "PLAYER_DISCONNECTED %s SHORT Waiting for reconnect (up to %d seconds)...",
                     nickname_copy, RECONNECT_TIMEOUT);
             room_broadcast_except(room, broadcast, client);
 
-            logger_log(LOG_INFO, "DEBUG: Client %d (%s): Marked for reconnect, will wait %d seconds (timeout_checker will handle cleanup)",
+            logger_log(LOG_INFO, "Client %d (%s): Waiting for reconnect (%d seconds)",
                       client_id, nickname_copy, RECONNECT_TIMEOUT);
 
             // Don't free client - timeout_checker will handle cleanup after 60s if no reconnect
@@ -936,7 +896,7 @@ void* client_handler_thread(void *arg) {
             return NULL;
         }
     } else if (client->is_disconnected) {
-        // CRITICAL: Copy client_id, nickname, room, and state locally to prevent use-after-free
+        // CRITICAL: Copy client data locally to prevent use-after-free
         // because handle_reconnect on another thread can free() this client at any time
         int client_id = client->client_id;
         char nickname_copy[MAX_NICK_LENGTH];
@@ -945,33 +905,24 @@ void* client_handler_thread(void *arg) {
         room_t *room = client->room;
         client_state_t state = client->state;
 
-        // Client was marked as disconnected (by PONG timeout or other reason)
-        // Keep client in memory for reconnect - timeout_checker will clean up after 60s
-        logger_log(LOG_INFO, "DEBUG: Client %d (%s) is marked as disconnected, keeping in memory for reconnect (timeout_checker will clean up after %ds)",
-                  client_id, nickname_copy, RECONNECT_TIMEOUT);
+        logger_log(LOG_INFO, "Client %d (%s): Keeping in memory for reconnect",
+                  client_id, nickname_copy);
 
         // If in room but not in game, remove from room (but keep client for reconnect)
         if (room != NULL && state != STATE_IN_GAME) {
-            logger_log(LOG_INFO, "DEBUG: Client %d in room but not in game - removing from room", client_id);
             room_remove_player(room, client);
         }
 
-        // Don't free client - timeout_checker will handle cleanup after 60s
+        // Don't free client - timeout_checker will handle cleanup
         return NULL;
     }
 
-    // Normal disconnect (not in game or not waiting for reconnect)
-    logger_log(LOG_INFO, "DEBUG: NORMAL DISCONNECT PATH - Client %d (%s): Normal disconnect (state=%d, not in active game)",
-               client->client_id, client->nickname[0] ? client->nickname : "unauthenticated", client->state);
+    // Normal disconnect
+    logger_log(LOG_INFO, "Client %d: Disconnecting", client->client_id);
 
     // If client is in a room (but not in game), remove them
     if (client->room != NULL) {
-        logger_log(LOG_INFO, "DEBUG: Client %d (%s) is in room %d, calling room_remove_player before disconnect",
-                  client->client_id, client->nickname, client->room->room_id);
         room_remove_player(client->room, client);
-        logger_log(LOG_INFO, "DEBUG: After room_remove_player - Client %d room=%p", client->client_id, (void*)client->room);
-    } else {
-        logger_log(LOG_INFO, "DEBUG: Client %d is NOT in any room, proceeding with disconnect", client->client_id);
     }
 
     logger_log(LOG_INFO, "Client %d: Closing connection", client->client_id);

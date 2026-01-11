@@ -384,7 +384,6 @@ public class GameController implements MessageListener {
 
         // Log all messages except PING (which has its own log)
         if (!command.equals("PING")) {
-            System.out.println("Game received: " + message);
         }
 
         switch (command) {
@@ -424,7 +423,6 @@ public class GameController implements MessageListener {
                 if (parts.length >= 2) {
                     String reconnectedPlayer = parts[1];
                     updateStatus(reconnectedPlayer + " reconnected!");
-                    System.out.println("Player reconnected: " + reconnectedPlayer);
                 }
                 break;
 
@@ -433,7 +431,6 @@ public class GameController implements MessageListener {
                 if (parts.length >= 3) {
                     int reconnectRoomId = Integer.parseInt(parts[1]);
                     String reconnectRoomName = parts[2];
-                    System.out.println("GameController: ROOM_JOINED after reconnect - room " + reconnectRoomId);
                     updateStatus("Reconnected to room: " + reconnectRoomName);
                     Platform.runLater(() -> {
                         roomNameLabel.setText("Room: " + reconnectRoomName);
@@ -521,7 +518,6 @@ public class GameController implements MessageListener {
             case "PING":
                 // Respond to PING with PONG
                 connection.sendMessage("PONG");
-                System.out.println("Game: Received PING, sent PONG");
                 break;
 
             case "ERROR":
@@ -606,7 +602,6 @@ public class GameController implements MessageListener {
                 startGameButton.setVisible(false);
             });
 
-            System.out.println("Game state restored: " + players.size() + " players, current player: " + currentPlayerNick);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -708,7 +703,6 @@ public class GameController implements MessageListener {
             alert.showAndWait();
 
             // Automatically return to lobby without asking
-            System.out.println("Game ended - returning to lobby");
             returnToLobby();
         });
     }
@@ -724,12 +718,10 @@ public class GameController implements MessageListener {
                 // I became the owner - show Start button
                 startGameButton.setVisible(true);
                 updateStatus("You are now the room owner. Start the game when ready.");
-                System.out.println("GameController: I became the new room owner");
             } else {
                 // Someone else is the owner - hide Start button
                 startGameButton.setVisible(false);
                 updateStatus(newOwnerNickname + " is now the room owner.");
-                System.out.println("GameController: " + newOwnerNickname + " is now the room owner");
             }
         });
     }
@@ -811,12 +803,10 @@ public class GameController implements MessageListener {
     private void handlePlayerDisconnected(String playerName, String disconnectType) {
         // Don't show dialog for our own disconnect or empty player name
         if (playerName == null || playerName.trim().isEmpty()) {
-            System.out.println("Ignoring disconnect notification with empty player name");
             return;
         }
 
         if (playerName.equals(this.nickname)) {
-            System.out.println("Ignoring own disconnect notification");
             return;
         }
 
@@ -839,7 +829,6 @@ public class GameController implements MessageListener {
                 alert.show();
             }
         });
-        System.out.println("Player " + playerName + " disconnected (" + disconnectType + ")");
     }
 
     /**

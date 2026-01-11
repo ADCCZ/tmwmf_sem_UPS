@@ -1,8 +1,0 @@
-{
-    "files.associations": {
-        "*.dbclient-js": "javascript",
-        "*.embeddedhtml": "html",
-        "winsock2.h": "c"
-    },
-    "java.configuration.updateBuildConfiguration": "automatic"
-}

@@ -198,9 +198,6 @@ int room_remove_player(room_t *room, client_t *client) {
         return -1;
     }
 
-    logger_log(LOG_INFO, "DEBUG: room_remove_player ENTRY - room=%d, client=%d (%s), player_count=%d, game=%p",
-              room->room_id, client->client_id, client->nickname, room->player_count, (void*)room->game);
-
     pthread_mutex_lock(&rooms_mutex);
 
     // Check if this client is the owner
@@ -209,7 +206,6 @@ int room_remove_player(room_t *room, client_t *client) {
     // Find and remove player
     for (int i = 0; i < MAX_PLAYERS_PER_ROOM; i++) {
         if (room->players[i] == client) {
-            logger_log(LOG_INFO, "DEBUG: Found player at index %d, removing...", i);
             room->players[i] = NULL;
             room->player_count--;
             client->room = NULL;
@@ -308,13 +304,11 @@ int room_remove_player(room_t *room, client_t *client) {
                 // Room is now empty
                 room->player_count = 0;
 
-                logger_log(LOG_INFO, "DEBUG: Room %d is now empty after forfeit, will be destroyed", forfeit_room_id);
-
                 // Unlock mutex and destroy room
                 pthread_mutex_unlock(&rooms_mutex);
                 room_destroy(room);
 
-                logger_log(LOG_INFO, "DEBUG: Room %d destroyed after forfeit (LEAVE_ROOM)", forfeit_room_id);
+                logger_log(LOG_INFO, "Room %d destroyed after forfeit", forfeit_room_id);
                 return 0;
             }
 
@@ -365,26 +359,18 @@ int room_remove_player(room_t *room, client_t *client) {
                 }
             }
 
-            // If room is empty, destroy it using room_destroy()
-            // IMPORTANT: Do NOT free() inline to prevent double-free
+            // If room is empty, destroy it
             if (room->player_count == 0) {
-                logger_log(LOG_INFO, "DEBUG: Room %d is empty (player_count=0), destroying", room->room_id);
-
-                // Store room_id before destroy (for logging after unlock)
                 int room_id = room->room_id;
 
                 // Unlock mutex before calling room_destroy (it will lock again)
                 pthread_mutex_unlock(&rooms_mutex);
-
-                // Call proper destroy function (handles removal from array + free)
                 room_destroy(room);
 
-                logger_log(LOG_INFO, "DEBUG: Room %d destroyed after last player left", room_id);
+                logger_log(LOG_INFO, "Room %d destroyed (empty)", room_id);
                 return 0;
             }
 
-            logger_log(LOG_INFO, "DEBUG: room_remove_player EXIT - room=%d still has %d players",
-                      room->room_id, room->player_count);
             pthread_mutex_unlock(&rooms_mutex);
             return 0;
         }

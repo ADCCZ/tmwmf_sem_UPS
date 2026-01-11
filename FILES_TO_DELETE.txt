@@ -1,0 +1,146 @@
+# SOUBORY A SLOŽKY K ODSTRANĚNÍ PŘED UPLOADEM
+
+## ✅ PROTOKOL JE TEXTOVÝ (ASCII)
+Potvrzeno: client_handler.c:65 používá snprintf() a \n
+Klient používá PrintWriter/BufferedReader (textové stream)
+
+---
+
+## BINÁRNÍ SOUBORY A BUILD ARTEFAKTY
+
+### Server (C)
+- server_src/build/           # celá build složka
+- server_src/server           # zkompilovaný server (Linux)
+- server_src/server.exe       # zkompilovaný server (Windows - pokud existuje)
+- server_src/*.o              # objektové soubory
+
+### Klient (Java)
+- client_src/target/          # celá Maven build složka
+- client_src/installer/       # celá installer složka
+- client_src/dist/            # celá distribuce složka (18 MB!)
+- client_src/*.jar            # JAR soubory mimo target/
+
+---
+
+## IDE A EDITOR SOUBORY
+
+- .idea/                      # IntelliJ IDEA
+- .vscode/                    # Visual Studio Code
+- .vs/                        # Visual Studio
+- *.iml                       # IntelliJ module files
+- .project                    # Eclipse
+- .classpath                  # Eclipse
+- .settings/                  # Eclipse (pokud existuje)
+
+---
+
+## LOGY A DOČASNÉ SOUBORY
+
+### Log soubory
+- server.log                  # server log (root)
+- client.log                  # client log (root)
+- server_src/server.log       # server log (server dir)
+- client_src/client.log       # client log (client dir)
+
+### Dočasné soubory
+- *~                          # vim backup
+- *.swp                       # vim swap
+- *.swo                       # vim swap
+- .DS_Store                   # macOS
+- Thumbs.db                   # Windows
+- desktop.ini                 # Windows
+
+---
+
+## VOLITELNÉ (zvážit odstranění)
+
+- .git/                       # Git repository (pokud uploaduješ na GitHub, PONECH!)
+                              # Pokud uploaduješ jako ZIP na home.zcu.cz, můžeš SMAZAT
+
+---
+
+## CO PONECHAT (zdrojové kódy)
+
+### Server (C)
+✅ server_src/*.c             # zdrojové soubory
+✅ server_src/*.h             # hlavičkové soubory
+✅ server_src/Makefile        # build script
+
+### Klient (Java)
+✅ client_src/src/            # zdrojové kódy
+✅ client_src/pom.xml         # Maven config
+✅ client_src/*.fxml          # JavaFX layouts (pokud jsou)
+
+### Dokumentace
+✅ *.md                       # Markdown dokumenty
+✅ protokol_pexeso.md
+✅ architektura.md
+✅ CLAUDE.md
+✅ README.md (pokud existuje)
+✅ TESTING_GUIDE_LINUX.md
+✅ INTCPTOR_TEST_CONFIGS.md
+
+### Skripty
+✅ CLEANUP_BEFORE_UPLOAD.sh
+✅ CLEANUP_BEFORE_UPLOAD.bat
+✅ build-client.bat (pokud existuje)
+✅ run-client.bat (pokud existuje)
+
+---
+
+## JAK ODSTRANIT
+
+### Windows:
+Spusť: CLEANUP_BEFORE_UPLOAD.bat
+
+### Linux/macOS:
+chmod +x CLEANUP_BEFORE_UPLOAD.sh
+./CLEANUP_BEFORE_UPLOAD.sh
+
+### Ručně:
+Smaž každou položku dle seznamu výše
+
+---
+
+## KONTROLA PO VYČIŠTĚNÍ
+
+Zkontroluj velikost projektu:
+- Před cleanup: ~50-100 MB (s binárkami)
+- Po cleanup: ~500 KB - 2 MB (jen zdrojáky)
+
+Zkontroluj počet souborů:
+find . -type f | wc -l
+(Mělo by být cca 50-100 souborů)
+
+---
+
+## UPLOAD NA SERVER
+
+### Varianta A: Upload na home.zcu.cz
+1. Vytvoř ZIP archiv:
+   zip -r pexeso_projekt.zip . -x ".git/*"
+
+2. Upload přes SCP:
+   scp pexeso_projekt.zip login@home.zcu.cz:~/public_html/ups/sem/
+
+3. Na serveru rozbal:
+   ssh login@home.zcu.cz
+   cd ~/public_html/ups/sem/
+   unzip pexeso_projekt.zip
+
+### Varianta B: Push na GitHub
+1. Vyčisti projekt (ale PONECH .git/!)
+   ./CLEANUP_BEFORE_UPLOAD.sh
+
+2. Commit a push:
+   git add .
+   git commit -m "Clean build artifacts before release"
+   git push origin main
+
+---
+
+DŮLEŽITÉ: Před uploadem VŽDY zkontroluj, že:
+✅ Projekt se dá zkompilovat (make, mvn clean package)
+✅ Žádné binární soubory nejsou v commitu
+✅ Dokumentace je aktuální
+✅ Logy jsou smazané

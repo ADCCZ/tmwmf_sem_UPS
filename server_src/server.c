@@ -359,14 +359,14 @@ static void* timeout_checker_thread_func(void *arg) {
                     time_t ping_wait_time = now - last_ping_time;
 
                     if (ping_wait_time > PONG_TIMEOUT) {
-                        logger_log(LOG_WARNING, "DEBUG: Client %d (%s) didn't respond to PING within %d seconds",
+                        logger_log(LOG_WARNING, "Client %d (%s): PONG timeout (%d seconds)",
                                   client_id, nickname_copy, PONG_TIMEOUT);
 
                         // Mark client as disconnected for reconnect instead of immediate cleanup
                         if (!is_disconnected) {
                             client->is_disconnected = 1;
                             client->disconnect_time = now;
-                            logger_log(LOG_INFO, "DEBUG: Client %d (%s) marked as disconnected due to PONG timeout, will wait %ds for reconnect",
+                            logger_log(LOG_INFO, "Client %d (%s): Marked for reconnect (timeout: %ds)",
                                       client_id, nickname_copy, RECONNECT_TIMEOUT);
                         }
 
@@ -401,14 +401,8 @@ static void* timeout_checker_thread_func(void *arg) {
             if (is_disconnected && socket_fd == -1) {
                 time_t disconnect_duration = now - disconnect_time;
 
-                // Log every 10 seconds to show progress
-                if (disconnect_duration % 10 == 0 && disconnect_duration > 0) {
-                    logger_log(LOG_INFO, "DEBUG: Client %d (%s) waiting for reconnect: %ld/%d seconds",
-                              client_id, nickname_copy, disconnect_duration, RECONNECT_TIMEOUT);
-                }
-
                 if (disconnect_duration > RECONNECT_TIMEOUT) {
-                    logger_log(LOG_WARNING, "DEBUG: Client %d (%s) reconnect timeout expired (%ld seconds), ending game with forfeit",
+                    logger_log(LOG_WARNING, "Client %d (%s): Reconnect timeout expired (%ld seconds)",
                               client_id, nickname_copy, disconnect_duration);
 
                     // Get room and game

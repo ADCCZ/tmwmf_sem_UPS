@@ -1,0 +1,927 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[czech]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{fancyhdr}
+\usepackage{amssymb}  % Pro \checkmark
+\usepackage{pifont}    % Pro \ding{51} (alternative checkmark)
+\usepackage{tikz}      % Pro stavové diagramy
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,automata}
+
+% Definice vlastního checkmark (fallback)
+\newcommand{\OK}{$\checkmark$}
+
+% Nastavení pro listings
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny,
+    tabsize=4,
+    showstringspaces=false,
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue},
+    stringstyle=\color{red}
+}
+
+% Header a footer
+\setlength{\headheight}{15pt}  % Fix fancyhdr warning
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{KIV/UPS - Pexeso}
+\lhead{Semestrální práce}
+\rfoot{Strana \thepage}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdftitle={Dokumentace - Pexeso},
+}
+
+\begin{document}
+
+% Titulní strana
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+
+    {\Huge\bfseries Síťová hra Pexeso\par}
+    \vspace{1cm}
+    {\Large Semestrální práce z předmětu KIV/UPS\par}
+    \vspace{2cm}
+
+    {\Large Architektura server-klient (1:N)\par}
+    \vspace{0.5cm}
+    {\large Textový protokol přes TCP\par}
+    \vspace{3cm}
+
+    {\large
+    Server: C (BSD sockets, POSIX threads)\\
+    Klient: Java (JavaFX, java.net.Socket)\\
+    }
+
+    \vfill
+
+    {\large Západočeská univerzita v Plzni\\
+    Fakulta aplikovaných věd\\
+    \today\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% 1. ÚVOD
+\section{Úvod}
+
+Tato dokumentace popisuje implementaci síťové hry Memory (Pexeso) jako semestrální práce z předmětu KIV/UPS. Projekt implementuje kompletní client-server architekturu s podporou multiplayer režimu (2--4 hráči), lobby systémem, automatickým reconnect mechanismem a robustním textovým protokolem přes TCP.
+
+\subsection{Popis hry}
+
+Pexeso je tahová paměťová hra pro 2--4 hráče. Herní deska obsahuje sudý počet karet (typicky 16, 24, 32 nebo 36 karet) rozmístěných lícem dolů. Každá karta má přidělenou hodnotu (symbol) a každá hodnota se vyskytuje přesně 2×.
+
+\textbf{Pravidla:}
+\begin{itemize}[noitemsep]
+    \item Hráči se střídají v tazích
+    \item V každém tahu hráč otočí postupně 2 karty
+    \item Pokud se hodnoty karet shodují $\rightarrow$ hráč získává 1 bod a hraje znovu
+    \item Pokud se neshodují $\rightarrow$ karty se vrátí lícem dolů a přichází další hráč
+    \item Hra končí, když jsou všechny páry nalezeny
+    \item Vyhrává hráč(i) s nejvyšším skóre
+\end{itemize}
+
+\subsection{Architektura systému}
+
+Systém se skládá ze dvou hlavních komponent:
+
+\begin{description}[leftmargin=3cm]
+    \item[Server (C)] Spravuje herní logiku, místnosti, připojené klienty a stav her. Implementován v jazyce C s využitím BSD sockets a POSIX threads.
+    \item[Klient (Java)] Grafická aplikace s JavaFX pro zobrazení hry a interakci s uživatelem. Komunikuje se serverem pomocí textového protokolu.
+\end{description}
+
+\textbf{Klíčové vlastnosti:}
+\begin{itemize}[noitemsep]
+    \item Textový protokol (ASCII) přes TCP
+    \item Podpora 2--4 hráčů současně
+    \item Lobby systém s výběrem místností
+    \item Automatický reconnect po výpadku
+    \item PING/PONG keepalive mechanismus
+    \item Validace všech síťových zpráv
+    \item Logování na serveru i klientovi
+    \item Paralelní běh více herních místností
+\end{itemize}
+
+\newpage
+
+% 2. KOMUNIKAČNÍ PROTOKOL
+\section{Komunikační protokol}
+
+\subsection{Základní charakteristika}
+
+Protokol je navržen jako \textbf{textový aplikační protokol} nad transportním protokolem TCP. Všechny zprávy jsou kódovány v ASCII bez diakritiky.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Parametr} & \textbf{Hodnota} \\
+\hline
+Typ protokolu & Textový, aplikační vrstva \\
+Transportní protokol & TCP \\
+Kódování & ASCII (bez diakritiky) \\
+Ukončení zprávy & \texttt{\textbackslash n} (newline) \\
+Formát zprávy & \texttt{COMMAND [PARAM1] [PARAM2] ...} \\
+Oddělování parametrů & Jedna mezera (ASCII 0x20) \\
+\hline
+\end{tabular}
+\caption{Základní parametry protokolu}
+\end{table}
+
+\subsection{Datové typy a omezení}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{|l|p{4cm}|p{3cm}|p{3cm}|}
+\hline
+\textbf{Typ} & \textbf{Popis} & \textbf{Formát} & \textbf{Omezení} \\
+\hline
+nickname & Přezdívka hráče & String bez mezer & 1--16 znaků -> \newline a-z, A-Z, 0-9,  - \\
+room\_id & ID místnosti & Integer & 1--9999 \\
+room\_name & Název místnosti & String bez mezer & 1--20 znaků \\
+client\_id & ID klienta & Integer & 1--9999 \\
+card\_id & Index karty & Integer & 0--(board\_size-1) \\
+card\_value & Hodnota karty & Integer & 0--(board\_size/2-1) \\
+board\_size & Počet karet & Integer & 16, 24, 32, 36 \\
+max\_players & Max. hráčů & Integer & 2--4 \\
+score & Skóre hráče & Integer & $\geq$ 0 \\
+\hline
+\end{tabular}
+\caption{Datové typy protokolu}
+\end{table}
+
+\subsection{Příklady zpráv}
+
+\textbf{Klient $\rightarrow$ Server:}
+\begin{lstlisting}[language=bash]
+HELLO Alice
+LIST_ROOMS
+CREATE_ROOM Game1 2 16
+JOIN_ROOM 42
+START_GAME
+FLIP 5
+PONG
+RECONNECT 123
+\end{lstlisting}
+
+\newpage
+
+\textbf{Server $\rightarrow$ Klient:}
+\begin{lstlisting}[language=bash]
+WELCOME 1
+ROOM_LIST 2 1 Game1 2 4 WAITING 2 Game2 1 2 PLAYING
+ROOM_CREATED 1 Game1
+GAME_START 16 2 Alice Bob
+YOUR_TURN
+CARD_REVEAL 5 3 Alice
+MATCH Alice 1
+MISMATCH Bob
+GAME_END Alice 8 Bob 6
+PING
+PLAYER_DISCONNECTED Bob SHORT
+ERROR INVALID_COMMAND Unknown command
+\end{lstlisting}
+
+\subsection{Stavový diagram klienta}
+
+Klient prochází následujícími stavy:
+
+\begin{enumerate}[noitemsep]
+    \item \texttt{DISCONNECTED} -- Nepřipojeno k serveru
+    \item \texttt{CONNECTED} -- TCP spojení navázáno
+    \item \texttt{AUTHENTICATED} -- Po úspěšném \texttt{HELLO}
+    \item \texttt{IN\_LOBBY} -- V lobby (může listovat místnosti)
+    \item \texttt{IN\_ROOM} -- V místnosti (čeká na start)
+    \item \texttt{IN\_GAME} -- Hra běží
+    \item \texttt{SHORT\_DISCONNECT} -- Krátkodobý výpadek (< 90s)
+    \item \texttt{LONG\_DISCONNECT} -- Dlouhodobý výpadek (> 90s)
+\end{enumerate}
+
+Přechody mezi stavy jsou řízeny protokolovými zprávami (např. \texttt{WELCOME}, \texttt{ROOM\_JOINED}, \texttt{GAME\_START}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    node distance=2.5cm,
+    auto,
+    >=Stealth,
+    state/.style={
+        rectangle,
+        rounded corners,
+        draw=black,
+        thick,
+        minimum width=3cm,
+        minimum height=0.8cm,
+        text centered,
+        font=\small
+    },
+    initial/.style={
+        state,
+        fill=red!20
+    },
+    final/.style={
+        state,
+        fill=green!20
+    }
+]
+
+% Stavy
+\node[initial] (disc) {DISCONNECTED};
+\node[state, right=of disc] (conn) {CONNECTED};
+\node[state, right=of conn] (auth) {AUTHENTICATED};
+\node[state, below=of auth] (lobby) {IN\_LOBBY};
+\node[state, left=of lobby] (room) {IN\_ROOM};
+\node[state, left=of room] (game) {IN\_GAME};
+\node[state, below=3cm of game] (short) {SHORT\_DISC};
+\node[final, below=3cm of lobby] (long) {LONG\_DISC};
+
+% Přechody
+\draw[->] (disc) -- node[above] {\tiny connect()} (conn);
+\draw[->] (conn) -- node[above] {\tiny HELLO} (auth);
+\draw[->] (auth) -- node[right] {\tiny WELCOME} (lobby);
+\draw[->] (lobby) -- node[above] {\tiny JOIN\_ROOM} (room);
+\draw[->] (room) -- node[above] {\tiny GAME\_START} (game);
+
+% Reconnect
+\draw[->] (game) -- node[left, align=center] {\tiny timeout\\výpadek} (short);
+\draw[->] (short) -- node[below, align=center] {\tiny RECONNECT\\+ GAME\_STATE} (game);
+\draw[->] (short) -- node[right] {\tiny >90s} (long);
+
+% Návrat do lobby
+\draw[->] (game) to[bend right=45] node[below] {\tiny GAME\_END} (lobby);
+\draw[->] (room) to[bend left=30] node[above] {\tiny LEAVE\_ROOM} (lobby);
+
+% Odpojení
+\draw[->] (lobby) to[bend left=60] node[above, align=center] {\tiny disconnect()\\QUIT} (disc);
+\draw[->] (game) to[bend right=80] node[below, align=center] {\tiny user\\disconnect} (disc);
+
+% List rooms loop
+\draw[->] (lobby) to[loop above] node[above] {\tiny LIST\_ROOMS} (lobby);
+
+\end{tikzpicture}
+\caption{Stavový diagram klienta}
+\label{fig:state-diagram-client}
+\end{figure}
+
+\subsection{Keepalive mechanismus (PING/PONG)}
+
+Server pravidelně kontroluje živost klientů pomocí PING/PONG mechanismu:
+
+\begin{itemize}[noitemsep]
+    \item Server posílá \texttt{PING} každých 5 sekund po přijetí \texttt{PONG}
+    \item Klient musí odpovědět \texttt{PONG} do 5 sekund
+    \item Pokud klient neodpoví $\rightarrow$ server označí klienta jako odpojeného
+    \item Klient má \texttt{READ\_TIMEOUT} 15 sekund -- pokud od serveru nepřijde žádná zpráva, detekuje výpadek
+\end{itemize}
+
+\subsection{Reconnect mechanismus}
+
+\textbf{Krátkodobý výpadek (SHORT\_DISCONNECT):}
+\begin{itemize}[noitemsep]
+    \item Klient detekuje odpojení (READ\_TIMEOUT 15s)
+    \item Automatický reconnect: 7 pokusů × 10s interval = 70s celkem
+    \item Server čeká 90 sekund na reconnect
+    \item Po úspěšném reconnectu server pošle \texttt{GAME\_STATE} s aktuálním stavem hry
+    \item Hra pokračuje ze stejného stavu
+\end{itemize}
+
+\textbf{Dlouhodobý výpadek (LONG\_DISCONNECT):}
+\begin{itemize}[noitemsep]
+    \item Klient zkouší reconnect 70s, poté vzdá
+    \item Server po 90s bez reconnectu odstraní hráče
+    \item Server pošle \texttt{PLAYER\_DISCONNECTED <nick> LONG}
+    \item Pokud zbývá < 2 hráči $\rightarrow$ hra končí (\texttt{GAME\_END\_FORFEIT})
+    \item Pokud zbývá $\geq$ 2 hráči $\rightarrow$ hra pokračuje bez odpojeného hráče
+\end{itemize}
+
+\subsection{Návaznost zpráv (sekvenční diagram)}
+
+Následující diagram ukazuje typickou komunikaci při připojení, vytvoření hry a hraní:
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    >=Stealth,
+    node distance=0.5cm,
+    message/.style={->, thick},
+    actor/.style={rectangle, draw, minimum width=2cm, minimum height=0.8cm}
+]
+
+% Aktéři
+\node[actor] (alice) at (0,0) {Alice};
+\node[actor] (server) at (5,0) {Server};
+\node[actor] (bob) at (10,0) {Bob};
+
+% Vertikální linie
+\draw[thick] (alice.south) -- ++(0,-14);
+\draw[thick] (server.south) -- ++(0,-14);
+\draw[thick] (bob.south) -- ++(0,-14);
+
+% Zprávy - Alice
+\draw[message] (0,-1) -- node[above] {\tiny HELLO Alice} (5,-1);
+\draw[message] (5,-1.5) -- node[above] {\tiny WELCOME 1} (0,-1.5);
+
+\draw[message] (0,-2.5) -- node[above] {\tiny CREATE\_ROOM Game1 2 16} (5,-2.5);
+\draw[message] (5,-3) -- node[above] {\tiny ROOM\_CREATED 1 Game1} (0,-3);
+
+% Zprávy - Bob
+\draw[message] (10,-4) -- node[above] {\tiny HELLO Bob} (5,-4);
+\draw[message] (5,-4.5) -- node[above] {\tiny WELCOME 2} (10,-4.5);
+
+\draw[message] (10,-5.5) -- node[above] {\tiny JOIN\_ROOM 1} (5,-5.5);
+\draw[message] (5,-6) -- node[above] {\tiny ROOM\_JOINED 1 ...} (10,-6);
+\draw[message] (5,-6.5) -- node[above] {\tiny PLAYER\_JOINED Bob} (0,-6.5);
+
+% Start hry
+\draw[message] (0,-7.5) -- node[above] {\tiny START\_GAME} (5,-7.5);
+\draw[message] (5,-8) -- node[above] {\tiny GAME\_START 16 2 Alice Bob} (0,-8);
+\draw[message] (5,-8.5) -- node[above] {\tiny GAME\_START 16 2 Alice Bob} (10,-8.5);
+
+\draw[message] (5,-9) -- node[above] {\tiny YOUR\_TURN} (0,-9);
+
+% Herní tah
+\draw[message] (0,-10) -- node[above] {\tiny FLIP 5} (5,-10);
+\draw[message] (5,-10.5) -- node[above] {\tiny CARD\_REVEAL 5 3 Alice} (0,-10.5);
+\draw[message] (5,-11) -- node[above] {\tiny CARD\_REVEAL 5 3 Alice} (10,-11);
+
+\draw[message] (0,-11.5) -- node[above] {\tiny FLIP 12} (5,-11.5);
+\draw[message] (5,-12) -- node[above] {\tiny CARD\_REVEAL 12 7 Alice} (0,-12);
+\draw[message] (5,-12.5) -- node[above] {\tiny CARD\_REVEAL 12 7 Alice} (10,-12.5);
+
+\draw[message] (5,-13) -- node[above] {\tiny MISMATCH Bob} (0,-13);
+\draw[message] (5,-13.5) -- node[above] {\tiny MISMATCH Bob} (10,-13.5);
+
+\end{tikzpicture}
+\caption{Sekvenční diagram typické komunikace (připojení, vytvoření hry, herní tah)}
+\label{fig:sequence-diagram}
+\end{figure}
+
+\subsection{Validace a chybové stavy}
+
+Server validuje všechny příchozí zprávy a odpovídá chybovými kódy:
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{|l|p{8cm}|}
+\hline
+\textbf{Error kód} & \textbf{Popis} \\
+\hline
+INVALID\_COMMAND & Neznámý příkaz \\
+INVALID\_PARAMS & Špatný počet/formát parametrů \\
+NOT\_AUTHENTICATED & Příkaz vyžaduje autentizaci \\
+NICK\_IN\_USE & Přezdívka je již používána \\
+ROOM\_NOT\_FOUND & Místnost neexistuje \\
+ROOM\_FULL & Místnost je plná \\
+NOT\_IN\_ROOM & Hráč není v místnosti \\
+NOT\_ROOM\_OWNER & Pouze vlastník může startovat hru \\
+NOT\_YOUR\_TURN & Není na tahu tento hráč \\
+INVALID\_CARD & Neplatné ID karty \\
+\hline
+\end{tabular}
+\caption{Chybové kódy protokolu}
+\end{table}
+
+Server odpojí klienta po \textbf{3 nevalidních zprávách} (konfigurovatelné).
+
+\newpage
+
+% 3. IMPLEMENTACE SERVERU
+\section{Implementace serveru (C)}
+
+\subsection{Architektura a moduly}
+
+Server je implementován v jazyce C s následující modulární strukturou:
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{|l|p{9cm}|}
+\hline
+\textbf{Modul} & \textbf{Odpovědnost} \\
+\hline
+\texttt{main.c} & Vstupní bod, parsování argumentů, inicializace serveru \\
+\texttt{server.c} & Listening socket, accept loop, vytváření threadů \\
+\texttt{client\_handler.c} & Obsluha jednotlivých klientů, zpracování zpráv \\
+\texttt{client\_list.c} & Správa seznamu připojených klientů \\
+\texttt{room.c} & Správa lobby a herních místností \\
+\texttt{game.c} & Logika hry Pexeso (deska, tahy, vyhodnocení) \\
+\texttt{logger.c} & Thread-safe logování do souboru \\
+\texttt{protocol.h} & Definice protokolových konstant \\
+\hline
+\end{tabular}
+\caption{Moduly serveru}
+\end{table}
+
+\subsection{Datové struktury}
+
+\textbf{Struktura klienta:}
+\begin{lstlisting}[language=C]
+typedef struct client_t {
+    int client_id;           // Unikatni ID
+    int socket_fd;           // Socket file descriptor
+    char nickname[MAX_NICK_LENGTH];
+    client_state_t state;    // CONNECTED/AUTHENTICATED/...
+    time_t last_activity;    // Posledni aktivita
+    int invalid_message_count; // Pocet chyb
+    int is_disconnected;     // Flag odpojeni
+    pthread_mutex_t mutex;   // Thread safety
+} client_t;
+\end{lstlisting}
+
+\textbf{Struktura místnosti:}
+\begin{lstlisting}[language=C]
+typedef struct room_t {
+    int room_id;
+    char name[MAX_ROOM_NAME_LENGTH];
+    client_t *players[MAX_PLAYERS_PER_ROOM];
+    int player_count;
+    int max_players;
+    client_t *owner;
+    room_state_t state;      // WAITING/PLAYING
+    game_t *game;            // Hra (pokud bezi)
+    pthread_mutex_t mutex;
+} room_t;
+\end{lstlisting}
+
+\newpage
+
+\textbf{Struktura hry:}
+\begin{lstlisting}[language=C]
+typedef struct game_t {
+    int board_size;          // Pocet karet
+    card_t *cards;           // Pole karet
+    client_t **players;      // Hraci
+    int player_count;
+    int current_player;      // Index aktualniho hrace
+    int *scores;             // Skore hracu
+    int flipped_count;       // Pocet otevenych karet
+    int first_card_id;       // ID prvni karty
+} game_t;
+\end{lstlisting}
+
+\subsection{Paralelizace -- POSIX threads}
+
+Server používá \textbf{thread-per-client} model:
+
+\begin{itemize}[noitemsep]
+    \item Hlavní thread běží v \texttt{server\_run()} -- nekonečná accept loop
+    \item Pro každého nového klienta se vytvoří vlastní thread (\texttt{pthread\_create})
+    \item Thread se detachuje (\texttt{pthread\_detach}) $\rightarrow$ automatický cleanup
+    \item Každý thread má vlastní \texttt{client\_t} strukturu
+    \item Logger používá \texttt{pthread\_mutex\_t} pro thread-safe zápis
+    \item Room broadcast operace jsou synchronizované mutexem
+\end{itemize}
+
+\textbf{Výhody thread-per-client:}
+\begin{itemize}[noitemsep]
+    \item Jednoduchá implementace -- každý klient má vlastní kontext
+    \item Blokující I/O operace neovlivňují ostatní klienty
+    \item Přirozená izolace mezi klienty
+    \item Snadný debugging
+\end{itemize}
+
+\subsection{Použité knihovny a API}
+
+\textbf{BSD Sockets (POSIX):}
+\begin{lstlisting}[language=C]
+#include <sys/socket.h>   // socket(), bind(), listen(), accept()
+#include <netinet/in.h>   // struct sockaddr_in
+#include <arpa/inet.h>    // inet_pton(), inet_ntop()
+\end{lstlisting}
+
+\textbf{POSIX Threads:}
+\begin{lstlisting}[language=C]
+#include <pthread.h>      // pthread_create(), pthread_mutex_t
+\end{lstlisting}
+
+\textbf{Standardní knihovna:}
+\begin{lstlisting}[language=C]
+#include <unistd.h>       // close(), read(), write()
+#include <string.h>       // strcpy(), strncpy(), strcmp()
+#include <stdlib.h>       // malloc(), free(), atoi()
+#include <stdio.h>        // printf(), snprintf(), fopen()
+#include <time.h>         // time(), localtime()
+\end{lstlisting}
+
+\textbf{Všechny použité knihovny jsou součástí POSIX standardu.} Nebyly použity žádné externí networking knihovny.
+
+\subsection{Konfigurace serveru}
+
+Server přijímá konfiguraci z příkazové řádky:
+
+\begin{lstlisting}[language=bash]
+./server <IP> <PORT> <MAX_ROOMS> <MAX_CLIENTS>
+\end{lstlisting}
+
+\textbf{Příklad:}
+\begin{lstlisting}[language=bash]
+./server 0.0.0.0 10000 10 50
+\end{lstlisting}
+
+Parametry:
+\begin{itemize}[noitemsep]
+    \item \texttt{IP} -- IP adresa pro bind (např. \texttt{0.0.0.0} pro všechna rozhraní)
+    \item \texttt{PORT} -- Port pro listening (např. \texttt{10000})
+    \item \texttt{MAX\_ROOMS} -- Maximální počet místností (např. \texttt{10})
+    \item \texttt{MAX\_CLIENTS} -- Maximální počet klientů celkem (např. \texttt{50})
+\end{itemize}
+
+\subsection{Logování}
+
+Server loguje všechny důležité události do souboru \texttt{server.log}:
+
+\begin{itemize}[noitemsep]
+    \item Připojení/odpojení klientů (IP, port, čas)
+    \item Autentizace (nickname, client\_id)
+    \item Vytvoření a zrušení místností
+    \item Start a konec her
+    \item Výpadky (SHORT/LONG disconnect)
+    \item Reconnect události
+    \item Nevalidní zprávy (příkaz, client\_id)
+    \item Interní chyby
+\end{itemize}
+
+\textbf{Příklad logu:}
+\begin{lstlisting}
+[2026-01-11 12:00:00] [INFO] Server initialized on 0.0.0.0:10000
+[2026-01-11 12:00:05] [INFO] Client 1 connected from 127.0.0.1:54321
+[2026-01-11 12:00:06] [INFO] Client 1 authenticated as 'Alice'
+[2026-01-11 12:00:10] [INFO] Room 1 created: Game1 (max 2 players)
+[2026-01-11 12:00:15] [INFO] Client 2 joined room 1
+[2026-01-11 12:00:20] [INFO] Game started in room 1
+[2026-01-11 12:01:30] [WARNING] Client 1: Invalid command 'INVALID'
+[2026-01-11 12:02:00] [INFO] Game ended in room 1: Alice 8, Bob 6
+\end{lstlisting}
+
+\newpage
+
+% 4. IMPLEMENTACE KLIENTA
+\section{Implementace klienta (Java + JavaFX)}
+
+\subsection{Architektura MVC}
+
+Klient je implementován v Javě s využitím JavaFX a architekturou Model-View-Controller:
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{|l|p{9cm}|}
+\hline
+\textbf{Balíček/Třída} & \textbf{Odpovědnost} \\
+\hline
+\texttt{Main.java} & Vstupní bod, správa scén, inicializace loggeru \\
+\texttt{network/ClientConnection} & TCP spojení, async čtení, auto-reconnect \\
+\texttt{network/MessageListener} & Rozhraní pro příjem zpráv \\
+\texttt{protocol/ProtocolConstants} & Definice protokolu, timeouty \\
+\texttt{model/Room} & Model herní místnosti \\
+\texttt{controller/LoginController} & Ovládání přihlašovací obrazovky \\
+\texttt{controller/LobbyController} & Ovládání lobby (seznam místností) \\
+\texttt{controller/GameController} & Ovládání herní obrazovky \\
+\texttt{util/Logger} & Thread-safe logování do \texttt{client.log} \\
+\hline
+\end{tabular}
+\caption{Moduly klienta}
+\end{table}
+
+\subsection{Síťová komunikace}
+
+\textbf{Asynchronní model:}
+
+Klient používá oddělené vlákno pro síťovou komunikaci, aby GUI nezamrzalo:
+
+\begin{lstlisting}[language=Java]
+// Cteni v oddelnem vlakne
+private void readerLoop() {
+    while (running && (line = in.readLine()) != null) {
+        final String message = line.trim();
+        if (listener != null) {
+            // GUI aktualizace pres Platform.runLater()
+            listener.onMessageReceived(message);
+        }
+    }
+}
+\end{lstlisting}
+
+\textbf{Schéma komunikace:}
+\begin{verbatim}
+[GUI Thread] -> sendMessage() -> socket
+[Reader Thread] -> readLine() -> Platform.runLater() -> onMessageReceived()
+\end{verbatim}
+
+\subsection{Použité knihovny a API}
+
+\textbf{Java Standard Library (java.net):}
+\begin{lstlisting}[language=Java]
+import java.net.Socket;              // TCP socket
+import java.net.InetSocketAddress;   // Adresa serveru
+\end{lstlisting}
+
+\textbf{Java I/O:}
+\begin{lstlisting}[language=Java]
+import java.io.BufferedReader;       // Cteni textu
+import java.io.InputStreamReader;    // Stream -> Reader
+import java.io.PrintWriter;          // Zapis textu
+\end{lstlisting}
+
+\newpage
+
+\textbf{JavaFX (GUI):}
+\begin{lstlisting}[language=Java]
+import javafx.application.Application;
+import javafx.application.Platform;  // runLater()
+import javafx.scene.Scene;
+import javafx.stage.Stage;
+import javafx.fxml.FXMLLoader;
+\end{lstlisting}
+
+\textbf{Všechny použité knihovny jsou součástí Java Standard Edition.} Nebyly použity žádné externí networking knihovny.
+
+\subsection{Timeouty a reconnect}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|r|p{5cm}|}
+\hline
+\textbf{Konstanta} & \textbf{Hodnota} & \textbf{Popis} \\
+\hline
+CONNECTION\_TIMEOUT & 5s & Timeout při navazování spojení \\
+READ\_TIMEOUT & 15s & Timeout při čtení ze socketu \\
+RECONNECT\_INTERVAL & 10s & Interval mezi reconnect pokusy \\
+MAX\_RECONNECT\_ATTEMPTS & 7 & Počet pokusů (= 70s celkem) \\
+\hline
+\end{tabular}
+\caption{Timeouty klienta}
+\end{table}
+
+\subsection{GUI a uživatelské rozhraní}
+
+Klient implementuje \textbf{grafické rozhraní pomocí JavaFX} (ne konzole):
+
+\begin{description}
+    \item[Login obrazovka] -- Zadání IP, portu a přezdívky
+    \item[Lobby obrazovka] -- Seznam místností, možnost vytvořit/připojit se
+    \item[Game obrazovka] -- Herní deska, karty, skóre, informace o hráčích
+\end{description}
+
+\textbf{Klíčové vlastnosti GUI:}
+\begin{itemize}[noitemsep]
+    \item Non-blocking -- síťové operace v odděleném threadu
+    \item Aktuální stav hry -- herní pole, přezdívky, kdo je na tahu
+    \item Indikace nedostupnosti -- server/protihráč offline
+    \item Validace vstupů -- IP adresa, port, nickname, herní tahy
+\end{itemize}
+
+\subsection{Logování}
+
+Klient loguje události do souboru \texttt{client.log}:
+
+\begin{itemize}[noitemsep]
+    \item Připojení k serveru
+    \item Autentizace (client\_id)
+    \item Reconnect události
+    \item Chyby (síťové, protokolové)
+    \item Změny stavů
+\end{itemize}
+
+\textbf{Příklad logu:}
+\begin{lstlisting}
+[2026-01-11 12:00:00] [INFO] Logger initialized
+[2026-01-11 12:00:00] [INFO] Application starting...
+[2026-01-11 12:00:05] [INFO] Connecting to 127.0.0.1:10000
+[2026-01-11 12:00:05] [INFO] Connected successfully
+[2026-01-11 12:00:06] [INFO] Client authenticated (ID: 1)
+[2026-01-11 12:01:30] [WARNING] Connection timeout - attempting reconnect
+[2026-01-11 12:01:40] [INFO] Reconnect successful after 1 attempts
+\end{lstlisting}
+
+\newpage
+
+% 5. PŘEKLAD A SPUŠTĚNÍ
+\section{Překlad a spuštění}
+
+\subsection{Požadavky na prostředí}
+
+\textbf{Server (C):}
+\begin{itemize}[noitemsep]
+    \item GNU/Linux
+    \item GCC 7.5+ nebo Clang 6.0+
+    \item GNU Make 4.1+
+    \item POSIX threads (libpthread)
+\end{itemize}
+
+\textbf{Klient (Java):}
+\begin{itemize}[noitemsep]
+    \item Java SE 17+ (OpenJDK nebo Oracle JDK)
+    \item Apache Maven 3.6+
+    \item JavaFX 17+ (stáhne Maven automaticky)
+\end{itemize}
+
+\subsection{Překlad serveru}
+
+\textbf{Pomocí Makefile:}
+\begin{lstlisting}[language=bash]
+cd server_src
+make clean    # Vycistit stare buildy
+make          # Zkompilovat server
+\end{lstlisting}
+
+\textbf{Makefile:}
+\begin{lstlisting}[language=make]
+CC = gcc
+CFLAGS = -Wall -Wextra -pthread -g
+SOURCES = main.c server.c client_handler.c client_list.c \
+          logger.c room.c game.c
+TARGET = server
+
+all:
+    $(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
+
+clean:
+    rm -f $(TARGET)
+\end{lstlisting}
+
+\subsection{Překlad klienta}
+
+\textbf{Pomocí Maven:}
+\begin{lstlisting}[language=bash]
+cd client_src
+mvn clean package
+\end{lstlisting}
+
+Maven vytvoří spustitelný JAR:
+\begin{lstlisting}
+target/pexeso-client-1.0-SNAPSHOT.jar
+\end{lstlisting}
+
+\subsection{Spuštění}
+
+\textbf{Server:}
+\begin{lstlisting}[language=bash]
+./server <IP> <PORT> <MAX_ROOMS> <MAX_CLIENTS>
+
+# Priklad:
+./server 0.0.0.0 10000 10 50
+\end{lstlisting}
+
+\textbf{Klient:}
+\begin{lstlisting}[language=bash]
+java -jar target/pexeso-client-1.0-SNAPSHOT.jar
+
+# Nebo pres Maven:
+mvn javafx:run
+\end{lstlisting}
+
+\newpage
+
+% 6. TESTOVÁNÍ
+\section{Testování}
+
+\subsection{Testovací scénáře}
+
+\textbf{1. Základní hra (2 hráči):}
+\begin{enumerate}[noitemsep]
+    \item Alice se připojí, vytvoří místnost
+    \item Bob se připojí, vstoupí do místnosti
+    \item Alice spustí hru
+    \item Hráči střídavě otáčejí karty
+    \item Hra skončí, zobrazí se výsledky
+\end{enumerate}
+
+\textbf{2. Fragmentace zpráv (InTCPtor):}
+\begin{itemize}[noitemsep]
+    \item Zprávy přicházejí po 1--2 bajtech
+    \item Server/klient správně skládá fragmenty
+    \item Hra běží bez chyb (jen pomaleji)
+\end{itemize}
+
+\textbf{3. Reconnect mechanismus:}
+\begin{itemize}[noitemsep]
+    \item Simulace krátkodobého výpadku (< 90s)
+    \item Automatický reconnect klienta
+    \item Obnovení stavu hry (GAME\_STATE)
+    \item Simulace dlouhodobého výpadku (> 90s)
+    \item Odebrání hráče ze hry
+\end{itemize}
+
+\textbf{4. Nevalidní zprávy:}
+\begin{itemize}[noitemsep]
+    \item Náhodná data: \texttt{cat /dev/urandom | nc 127.0.0.1 10000}
+    \item Malformed příkazy: \texttt{HELLO}, \texttt{FLIP} (bez parametrů)
+    \item Příkazy ve špatném stavu: \texttt{FLIP} před \texttt{HELLO}
+    \item Server loguje chyby a odpojí po 3 chybách
+\end{itemize}
+
+\textbf{5. Memory leaks (Valgrind):}
+\begin{lstlisting}[language=bash]
+valgrind --leak-check=full ./server 0.0.0.0 10000 10 50
+\end{lstlisting}
+
+Očekávaný výsledek: \texttt{0 bytes definitely lost}
+
+\subsection{Výsledky testování}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|}
+\hline
+\textbf{Test} & \textbf{Výsledek} \\
+\hline
+Kompletní hra (2--4 hráči) & $\checkmark$ \\
+Fragmentace zpráv (extrémní) & $\checkmark$ \\
+Reconnect SHORT (< 90s) & $\checkmark$ \\
+Reconnect LONG (> 90s) & $\checkmark$ \\
+Nevalidní zprávy & $\checkmark$ \\
+Memory leaks (valgrind) & $\checkmark$ (0 leaks) \\
+Paralelní místnosti & $\checkmark$ \\
+PING/PONG keepalive & $\checkmark$ \\
+GUI non-blocking & $\checkmark$ \\
+\hline
+\end{tabular}
+\caption{Výsledky testování}
+\end{table}
+
+\newpage
+
+% 7. ZÁVĚR
+\section{Závěr}
+
+\subsection{Dosažené výsledky}
+
+Projekt splňuje všechny požadavky zadání:
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Kompletní síťová hra} -- 2--4 hráči, lobby, místnosti
+    \item \textbf{Textový protokol} -- ASCII přes TCP, čitelný a rozšiřitelný
+    \item \textbf{Robustní implementace} -- validace zpráv, error handling, logování
+    \item \textbf{Reconnect mechanismus} -- automatický při krátkodobém výpadku
+    \item \textbf{Paralelní běh} -- více místností současně bez vzájemného ovlivňování
+    \item \textbf{Stabilita} -- bez memory leaks (ověřeno valgrind), bez segfaultů
+    \item \textbf{Modulární kód} -- čitelná struktura, dokumentované komentáři
+    \item \textbf{Standardní build} -- Makefile (server), Maven (klient)
+\end{itemize}
+
+\subsection{Použité technologie}
+
+\textbf{Server:}
+\begin{itemize}[noitemsep]
+    \item Jazyk: C
+    \item Síťování: BSD sockets (POSIX)
+    \item Paralelizace: POSIX threads (thread-per-client)
+    \item Build: GNU Make
+\end{itemize}
+
+\textbf{Klient:}
+\begin{itemize}[noitemsep]
+    \item Jazyk: Java 17
+    \item Síťování: java.net.Socket (Java SE)
+    \item GUI: JavaFX 17
+    \item Build: Apache Maven
+\end{itemize}
+
+\subsection{Možná rozšíření}
+
+V budoucnosti lze projekt rozšířit o:
+
+\begin{itemize}[noitemsep]
+    \item Chat mezi hráči v místnosti
+    \item Statistiky hráčů (počet her, výher, průměrné skóre)
+    \item Žebříček nejlepších hráčů
+    \item Spectator režim (sledování hry bez účasti)
+    \item Registrace a autentizace hráčů (přezdívka + heslo)
+    \item Různé velikosti herních desek (konfigurovatelné při vytvoření místnosti)
+\end{itemize}
+
+\subsection{Zhodnocení}
+
+Implementace prokázala schopnost navrhnout a realizovat kompletní síťovou aplikaci s robustním protokolem, automatickým zotavením po výpadcích a stabilním během. Projekt splňuje všechny požadavky zadání a byl úspěšně otestován na různých scénářích včetně extrémní fragmentace zpráv a síťových výpadků.
+
+Klíčové poznatky:
+\begin{itemize}[noitemsep]
+    \item Důležitost správného buffering při fragmentaci zpráv
+    \item Nutnost thread-safe operací při paralelním běhu
+    \item Význam keepalive mechanismu pro detekci výpadků
+    \item Potřeba důkladné validace všech vstupů (bezpečnost)
+\end{itemize}
+
+\end{document}

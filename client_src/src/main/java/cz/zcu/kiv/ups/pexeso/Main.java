@@ -1,6 +1,7 @@
 package cz.zcu.kiv.ups.pexeso;
 
 import cz.zcu.kiv.ups.pexeso.controller.LoginController;
+import cz.zcu.kiv.ups.pexeso.util.Logger;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
@@ -14,6 +15,9 @@ public class Main extends Application {
 
     @Override
     public void start(Stage primaryStage) throws Exception {
+        // Initialize logger
+        Logger.init();
+        Logger.info("Application starting...");
         // Load FXML
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/cz/zcu/kiv/ups/pexeso/ui/LoginView.fxml"));
         Parent root = loader.load();
@@ -33,7 +37,8 @@ public class Main extends Application {
 
         // Handle application close
         primaryStage.setOnCloseRequest(event -> {
-            System.out.println("Application closing...");
+            Logger.info("Application closing...");
+            Logger.close();
             System.exit(0);
         });
     }

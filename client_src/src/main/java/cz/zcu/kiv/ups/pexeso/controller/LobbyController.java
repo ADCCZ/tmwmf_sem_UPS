@@ -245,12 +245,10 @@ public class LobbyController implements MessageListener {
                 break;
             case "GAME_STATE":
                 // Received after reconnect - we're in an active game
-                System.out.println("Lobby: Received GAME_STATE - switching to game view for reconnect");
                 handleGameStateReconnect(message);
                 break;
             case "YOUR_TURN":
                 // Also indicates we're in active game after reconnect
-                System.out.println("Lobby: Received YOUR_TURN - likely after reconnect, switching to game view");
                 handleGameStateReconnect(null);
                 break;
             case "PLAYER_RECONNECTED":
@@ -260,14 +258,12 @@ public class LobbyController implements MessageListener {
             case "PING":
                 // Respond to PING with PONG
                 connection.sendMessage("PONG");
-                System.out.println("Lobby: Received PING, sent PONG");
                 break;
             case "ERROR":
                 handleError(message);
                 break;
             default:
                 // Log unknown message
-                System.out.println("Lobby received: " + message);
                 break;
         }
     }
@@ -341,8 +337,6 @@ public class LobbyController implements MessageListener {
         int roomId = Integer.parseInt(parts[1]);
         String roomName = parts[2];
 
-        System.out.println("Lobby: Handling ROOM_JOINED - roomId=" + roomId + ", name=" + roomName);
-        System.out.println("Lobby: Stage is " + (stage == null ? "NULL" : "set"));
 
         Platform.runLater(() -> {
             updateStatus("Joined room: " + roomName);

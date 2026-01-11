@@ -9,7 +9,7 @@ Slouží jako základ pro implementaci v dalších krocích.
 
 **Poznámka k paralelizaci:** Původní návrh počítal s `select()` single-threaded modelem. Během implementace bylo rozhodnuto použít **POSIX threads (thread-per-client)** z důvodu jednodušší implementace a snadnějšího debuggingu. Obě metody jsou povoleny zadáním (PozadavkyUPS.pdf, strana 2).
 
-**Stav implementace:** Aktuálně implementována kostra serveru (Packet 3) - `main.c`, `server.c`, `client_handler.c`, `logger.c`, `protocol.h`. Moduly `room.c`, `game.c`, `protocol.c` budou implementovány v dalších packetech.
+**Stav implementace:** Projekt je **kompletně implementován** včetně všech modulů serveru i klienta, reconnect mechanismu, loggování a GUI.
 
 ---
 
@@ -19,16 +19,16 @@ Slouží jako základ pro implementaci v dalších krocích.
 
 ```
 
-server/
-├── main.c                  - vstupní bod serveru
-├── server.h / server.c     - inicializace a hlavní smyčka serveru
-├── client_handler.h / .c   - správa připojených klientů
-├── room.h / room.c         - správa lobby a herních místností
-├── game.h / game.c         - logika hry Pexeso
-├── protocol.h / protocol.c - parsování a tvorba zpráv
-├── logger.h / logger.c     - logování událostí
-├── config.h / config.c     - načítání konfigurace
-└── Makefile                - překlad projektu
+server_src/
+├── main.c                     - vstupní bod serveru
+├── server.h / server.c        - inicializace a hlavní smyčka serveru
+├── client_handler.h / .c      - obsluha klientských spojení a zpráv
+├── client_list.h / client_list.c - správa seznamu připojených klientů
+├── room.h / room.c            - správa lobby a herních místností
+├── game.h / game.c            - logika hry Pexeso
+├── protocol.h                 - definice protokolu a konstant
+├── logger.h / logger.c        - logování událostí do souboru
+└── Makefile                   - překlad projektu
 
 ````
 
@@ -135,14 +135,14 @@ server_config_t* server_get_config(void);
 
 ---
 
-#### 2.6 protocol.h / protocol.c
+#### 2.6 protocol.h
 
 **Odpovědnosti**
 
-* Parsování textových zpráv
-* Validace formátu a parametrů
-* Tvorba odpovědí dle specifikace protokolu
-* Pomocné funkce pro každý typ zprávy
+* Definice protokolových konstant a příkazů
+* Definice error kódů
+* Definice maximálních délek zpráv a nicků
+* Konstanty pro timeouty (PING/PONG interval, RECONNECT timeout)
 
 ---
 
@@ -150,18 +150,10 @@ server_config_t* server_get_config(void);
 
 **Odpovědnosti**
 
-* Logování událostí do souboru s časem
+* Logování událostí do souboru `server.log` s časem
 * Úrovně logů (INFO, WARNING, ERROR)
-* Thread-safe zápis
-
----
-
-#### 2.8 config.h / config.c
-
-**Odpovědnosti**
-
-* Načtení konfigurace ze souboru
-* Nastavení výchozích hodnot
+* Thread-safe zápis pomocí mutex
+* Truncate při startu serveru
 
 ---
 
@@ -222,13 +214,13 @@ typedef struct {
   * Spustí se nový thread: `pthread_create(&tid, NULL, client_handler_thread, client)`
   * Thread se detachuje: `pthread_detach(tid)` → automatický cleanup po ukončení
 * Logger používá mutex (`pthread_mutex_t`) pro thread-safe zápis
-* Místnosti budou mít vlastní synchronizační mechanismy (v budoucích verzích)
+* Room broadcast používá synchronizační mechanismy pro bezpečné odesílání zpráv všem hráčům
 
 **Thread-safety**
 
 * Logger: `pthread_mutex_lock()` / `unlock()` kolem zápisů
 * Klienti: žádná sdílená data (každý má vlastní `client_t`)
-* Místnosti: budou mít vlastní mutex pro přístup k hernímu stavu
+* Místnosti: broadcast operace jsou thread-safe, mutex pro přístup k hernímu stavu
 
 ---
 
@@ -258,29 +250,25 @@ Mechanismus PING/PONG, detekce SHORT/LONG disconnect a RECONNECT.
 ### 1. STRUKTURA BALÍČKŮ A TŘÍD
 
 ```
-client/
-└── cz/zcu/kiv/ups/pexeso/
-    ├── Main.java
-    ├── network/
-    │   ├── ClientConnection.java
-    │   └── MessageListener.java
-    ├── protocol/
-    │   ├── MessageParser.java
-    │   ├── MessageBuilder.java
-    │   └── ProtocolConstants.java
-    ├── model/
-    │   ├── GameState.java
-    │   ├── Room.java
-    │   ├── Player.java
-    │   └── Card.java
-    ├── controller/
-    │   ├── LoginController.java
-    │   ├── LobbyController.java
-    │   └── GameController.java
-    └── ui/
-        ├── LoginView.fxml
-        ├── LobbyView.fxml
-        └── GameView.fxml
+client_src/src/main/java/cz/zcu/kiv/ups/pexeso/
+├── Main.java
+├── network/
+│   ├── ClientConnection.java      - TCP spojení, auto-reconnect
+│   └── MessageListener.java       - rozhraní pro příjem zpráv
+├── protocol/
+│   └── ProtocolConstants.java     - konstanty protokolu a timeouty
+├── model/
+│   └── Room.java                  - model herní místnosti
+├── controller/
+│   ├── LoginController.java       - ovládání přihlašovací obrazovky
+│   ├── LobbyController.java       - ovládání lobby (seznam místností)
+│   └── GameController.java        - ovládání herní obrazovky
+├── util/
+│   └── Logger.java                - logování do client.log
+└── ui/
+    ├── LoginView.fxml             - layout přihlášení
+    ├── LobbyView.fxml             - layout lobby
+    └── GameView.fxml              - layout hry
 ```
 
 ---
@@ -290,28 +278,43 @@ client/
 #### 2.1 Main.java
 
 * Vstupní bod (JavaFX Application)
+* Inicializace loggeru
 * Správa scén (Login, Lobby, Game)
+* Cleanup při ukončení aplikace
 
 #### 2.2 ClientConnection.java
 
-* TCP spojení, asynchronní čtení (zvláštní vlákno)
-* Odesílání zpráv, automatické reconnecty, PING/PONG
+* TCP spojení přes BSD sockets (java.net.Socket)
+* Asynchronní čtení v samostatném vlákně
+* Odesílání zpráv, automatické reconnecty (7 pokusů × 10s)
+* PING/PONG keepalive mechanismus
+* Timeout detekce (READ_TIMEOUT 15s)
 
-#### 2.3 MessageParser / MessageBuilder
+#### 2.3 Logger.java (util/)
 
-* Rozklad a tvorba zpráv dle specifikace protokolu
+* **Nová komponenta pro splnění požadavku zadání**
+* Logování do souboru `client.log` (truncate při startu)
+* Thread-safe zápis (synchronized)
+* Úrovně: INFO, WARN, ERROR
+* Loguje: připojení, odpojení, reconnect, chyby, stavy
 
-#### 2.4 Model tříd (GameState, Room, Player, Card)
+#### 2.4 ProtocolConstants.java
 
-* Udržují stav hry, místností a hráčů
-* GameState = „single source of truth“
+* Definice konstant protokolu (příkazy, error kódy)
+* Timeouty (CONNECTION_TIMEOUT, READ_TIMEOUT, RECONNECT_INTERVAL, MAX_RECONNECT_ATTEMPTS)
 
-#### 2.5 Kontrolery (Login/Lobby/Game)
+#### 2.5 Model tříd (Room)
+
+* Udržují stav místností
+* Stav hry je plně řízen serverem (klient pouze zobrazuje)
+
+#### 2.6 Kontrolery (Login/Lobby/Game)
 
 * Obsluha GUI událostí a reagování na zprávy od serveru
 * Implementují rozhraní `MessageListener`
-* **Všechny kontrolery** (LoginController, LobbyController, GameController) musí zpracovávat PING zprávy a odpovídat PONG
+* **Všechny kontrolery** musí zpracovávat PING zprávy a odpovídat PONG
 * Při odpojení (onDisconnected) se klient vrací na přihlašovací obrazovku
+* Využívají Logger pro zaznamenávání důležitých událostí
 
 ---
 
@@ -351,58 +354,51 @@ client/
 
 ### 2. Testování
 
-* Unit testy `protocol.c`, `game.c`
-* Integrační testy s více klienty
+* Kompletní hra bez chyb (2-4 hráči)
 * Výpadky testovány přes iptables DROP/REJECT
-* Valgrind → memory leaks
+* Nevalidní zprávy (cat /dev/urandom | nc)
+* Valgrind pro memory leaks (žádné leaky detekované)
+* Paralelní místnosti
+* Reconnect mechanismus (odpojení a znovupřipojení)
 
 ### 3. Rozšiřitelnost
 
 * Modulární kód, možnost přidat chat, statistiky, žebříčky
+* Protocol podporuje budoucí příkazy
 
 ### 4. Dokumentace kódu
 
-* Komentáře ve všech `.h` a JavaDoc v Javě
+* Komentáře v `.h` souborech serveru
+* JavaDoc komentáře v klíčových třídách klienta
+* Technická dokumentace: `protokol_pexeso.md`, `architektura.md`
 
 ### 5. Makefile (server)
 
 ```make
 CC = gcc
-CFLAGS = -Wall -Wextra -pthread -g -std=c99
-LDFLAGS = -pthread
+CFLAGS = -Wall -Wextra -pthread -g
+SOURCES = main.c server.c client_handler.c client_list.c logger.c room.c game.c
+TARGET = server
 
-# Aktuálně implementované soubory
-SOURCES = main.c server.c client_handler.c logger.c
-# V budoucnu: + room.c game.c protocol.c config.c
-OBJECTS = $(SOURCES:.c=.o)
-TARGET  = server
-
-all: $(TARGET)
-
-$(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
-	@echo "Build successful: $(TARGET)"
-
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+all:
+	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
 
 clean:
-	rm -f $(OBJECTS) $(TARGET) server.log
-	@echo "Clean complete"
+	rm -f $(TARGET)
 
-run: $(TARGET)
-	./$(TARGET) 127.0.0.1 10000 10 50
+.PHONY: all clean
+```
 
-valgrind: $(TARGET)
-	valgrind --leak-check=full --show-leak-kinds=all ./$(TARGET) 127.0.0.1 10000 10 50
+**Kompilace:**
+```bash
+make              # Zkompiluje server
+make clean        # Smaže binárku
+```
 
-# Dependencies
-main.o: main.c server.h logger.h
-server.o: server.c server.h client_handler.h logger.h protocol.h
-client_handler.o: client_handler.c client_handler.h logger.h protocol.h
-logger.o: logger.c logger.h
-
-.PHONY: all clean run valgrind
+**Spuštění:**
+```bash
+./server <IP> <PORT> <MAX_ROOMS> <MAX_CLIENTS>
+./server 0.0.0.0 10000 10 50
 ```
 
 ### 6. Maven / Gradle (klient)
@@ -417,29 +413,36 @@ logger.o: logger.c logger.h
 
 ### Architektura Serveru (C)
 
-* Multi-threaded (POSIX threads, thread-per-client)
-* Modularita (8 modulů plánováno, 5 implementováno)
-* Datové struktury `client_t`, `server_config_t`, (+ `room_t`, `game_t` v budoucnu)
-* Thread-safe logování s mutex
-* Robustní zpracování fragmentovaných zpráv
+* **Multi-threaded:** POSIX threads (thread-per-client model)
+* **Modularita:** 6 hlavních modulů (main, server, client_handler, client_list, room, game, logger) + protocol.h
+* **Datové struktury:** `client_t`, `room_t`, `game_t`, `server_config_t`
+* **Thread-safe:** Mutex v loggeru, room broadcast operacích
+* **Robustní:** Zpracování fragmentovaných zpráv, validace vstupů
+* **Reconnect:** 90s timeout pro čekání na klienta (klient má 70s na reconnect)
+* **Logger:** Logování do `server.log` (truncate při startu)
 
 ### Architektura Klienta (JavaFX)
 
-* MVC – Model / View / Controller
-* Asynchronní síťové vlákno
-* `Platform.runLater()` pro bezpečné GUI
-* Automatické reconnect a aktualizace stavu
+* **MVC:** Model / View / Controller
+* **Asynchronní:** Síťové vlákno oddělené od GUI
+* **Bezpečné GUI:** `Platform.runLater()` pro všechny UI aktualizace
+* **Automatický reconnect:** 7 pokusů po 10 sekundách (70s celkem)
+* **Logger:** Vlastní logger do `client.log` (nová komponenta)
+* **Pouze Java standard library:** java.net.Socket, bez externích knihoven
 
 ### Klíčové vlastnosti
 
-✅ Modularita a čitelnost
+✅ Modularita a čitelnost kódu
 ✅ Bezpečná paralelizace (POSIX threads)
-✅ Thread-safe operace (mutex v loggeru)
-✅ Validace všech vstupů (plánováno)
-✅ Robustní error handling
-✅ Reconnect mechanismus (plánováno)
-✅ Logování a debugging
-✅ Zpracování fragmentovaných zpráv (testováno s InTCPtor)
+✅ Thread-safe operace (mutexy v loggeru a room broadcast)
+✅ Validace všech vstupů (server i klient)
+✅ Robustní error handling (3 chyby → disconnect)
+✅ **Reconnect mechanismus kompletně implementován**
+✅ **Logování na serveru i klientovi**
+✅ Zpracování fragmentovaných zpráv
+✅ PING/PONG keepalive
+✅ Podpora 2-4 hráčů, více paralelních místností
+✅ **Žádné memory leaky (ověřeno valgrind)**
 
 ---
 

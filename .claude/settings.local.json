@@ -38,7 +38,11 @@
       "Bash(wsl make:*)",
       "Bash(wsl make)",
       "Bash(wsl \"cd /mnt/d/ZCU/UPS/tmwmf_sem_UPS/server_src && make clean && make\")",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(for const in \"ERR_NICK_IN_USE\" \"ERR_NOT_YOUR_TURN\" \"ERR_NOT_IMPLEMENTED\" \"PING_INTERVAL\")",
+      "Bash(do echo -n \"$const: \")",
+      "Bash(done)",
+      "Bash(bash:*)"
     ],
     "deny": [],
     "ask": []

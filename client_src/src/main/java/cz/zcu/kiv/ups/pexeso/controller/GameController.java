@@ -429,7 +429,7 @@ public class GameController implements MessageListener {
             case "ROOM_JOINED":
                 // Received after reconnect - we're back in the room
                 if (parts.length >= 3) {
-                    int reconnectRoomId = Integer.parseInt(parts[1]);
+                    // parts[1] is room ID (not needed during reconnect)
                     String reconnectRoomName = parts[2];
                     updateStatus("Reconnected to room: " + reconnectRoomName);
                     Platform.runLater(() -> {

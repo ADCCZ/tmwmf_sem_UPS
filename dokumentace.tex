@@ -222,7 +222,7 @@ Přechody mezi stavy jsou řízeny protokolovými zprávami (např. \texttt{WELC
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}[
-    node distance=2.5cm,
+    node distance=3.5cm,
     auto,
     >=Stealth,
     state/.style={
@@ -230,10 +230,10 @@ Přechody mezi stavy jsou řízeny protokolovými zprávami (např. \texttt{WELC
         rounded corners,
         draw=black,
         thick,
-        minimum width=3cm,
-        minimum height=0.8cm,
+        minimum width=3.2cm,
+        minimum height=0.9cm,
         text centered,
-        font=\small
+        font=\footnotesize
     },
     initial/.style={
         state,
@@ -245,38 +245,44 @@ Přechody mezi stavy jsou řízeny protokolovými zprávami (např. \texttt{WELC
     }
 ]
 
-% Stavy
-\node[initial] (disc) {DISCONNECTED};
-\node[state, right=of disc] (conn) {CONNECTED};
-\node[state, right=of conn] (auth) {AUTHENTICATED};
-\node[state, below=of auth] (lobby) {IN\_LOBBY};
-\node[state, left=of lobby] (room) {IN\_ROOM};
-\node[state, left=of room] (game) {IN\_GAME};
-\node[state, below=3cm of game] (short) {SHORT\_DISC};
-\node[final, below=3cm of lobby] (long) {LONG\_DISC};
+% HORNÍ ŘADA - Připojení a lobby
+\node[initial] (disc) at (0,0) {DISCONNECTED};
+\node[state] (conn) at (4,0) {CONNECTED};
+\node[state] (auth) at (8,0) {AUTHENTICATED};
+\node[state] (lobby) at (12,0) {IN\_LOBBY};
 
-% Přechody
-\draw[->] (disc) -- node[above] {\tiny connect()} (conn);
-\draw[->] (conn) -- node[above] {\tiny HELLO} (auth);
-\draw[->] (auth) -- node[right] {\tiny WELCOME} (lobby);
-\draw[->] (lobby) -- node[above] {\tiny JOIN\_ROOM} (room);
-\draw[->] (room) -- node[above] {\tiny GAME\_START} (game);
+% STŘEDNÍ ŘADA - Room a hra
+\node[state] (room) at (8,-3) {IN\_ROOM};
+\node[state] (game) at (4,-3) {IN\_GAME};
 
-% Reconnect
-\draw[->] (game) -- node[left, align=center] {\tiny timeout\\výpadek} (short);
-\draw[->] (short) -- node[below, align=center] {\tiny RECONNECT\\+ GAME\_STATE} (game);
-\draw[->] (short) -- node[right] {\tiny >90s} (long);
+% SPODNÍ ŘADA - Disconnect stavy
+\node[state] (short) at (2,-6) {SHORT\_DISC};
+\node[final] (long) at (10,-6) {LONG\_DISC};
 
-% Návrat do lobby
-\draw[->] (game) to[bend right=45] node[below] {\tiny GAME\_END} (lobby);
-\draw[->] (room) to[bend left=30] node[above] {\tiny LEAVE\_ROOM} (lobby);
+% HLAVNÍ FLOW - Připojení
+\draw[->, very thick] (disc) -- node[above] {\scriptsize connect()} (conn);
+\draw[->, very thick] (conn) -- node[above] {\scriptsize HELLO} (auth);
+\draw[->, very thick] (auth) -- node[above] {\scriptsize WELCOME} (lobby);
 
-% Odpojení
-\draw[->] (lobby) to[bend left=60] node[above, align=center] {\tiny disconnect()\\QUIT} (disc);
-\draw[->] (game) to[bend right=80] node[below, align=center] {\tiny user\\disconnect} (disc);
+% HLAVNÍ FLOW - Hra
+\draw[->, very thick] (lobby) -- node[right, pos=0.3] {\scriptsize JOIN\_ROOM} (room);
+\draw[->, very thick] (room) -- node[above] {\scriptsize GAME\_START} (game);
 
-% List rooms loop
-\draw[->] (lobby) to[loop above] node[above] {\tiny LIST\_ROOMS} (lobby);
+% RECONNECT mechanismus
+\draw[->, thick, dashed] (game) -- node[left, align=center] {\scriptsize timeout\\[-1mm]\scriptsize výpadek} (short);
+\draw[->, thick, dashed] (short) to[bend left=20] node[below left, align=center] {\scriptsize RECONNECT\\[-1mm]\scriptsize +GAME\_STATE} (game);
+\draw[->, thick] (short) -- node[above] {\scriptsize >90s} (long);
+
+% NÁVRAT do lobby
+\draw[->] (game) to[bend left=25] node[above, pos=0.6] {\scriptsize GAME\_END} (lobby);
+\draw[->] (room) to[bend right=15] node[right, pos=0.7] {\scriptsize LEAVE\_ROOM} (lobby);
+
+% ODPOJENÍ
+\draw[->] (lobby) to[bend left=40] node[above, pos=0.5] {\scriptsize QUIT} (disc);
+\draw[->] (game) to[bend right=30] node[below left, pos=0.3] {\scriptsize disconnect()} (disc);
+
+% LIST ROOMS (loop)
+\draw[->] (lobby) edge[loop right, looseness=8] node[right] {\scriptsize LIST\_ROOMS} (lobby);
 
 \end{tikzpicture}
 \caption{Stavový diagram klienta}

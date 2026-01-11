@@ -13,7 +13,9 @@ int logger_init(const char *filename) {
     pthread_mutex_lock(&log_mutex);
 
     if (filename != NULL) {
-        log_file = fopen(filename, "a");
+        // Use "w" mode to truncate (clear) the log file on each server start
+        // This ensures clean logs for each test run
+        log_file = fopen(filename, "w");
         if (log_file == NULL) {
             pthread_mutex_unlock(&log_mutex);
             perror("Failed to open log file");

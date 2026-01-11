@@ -331,29 +331,43 @@ static void* timeout_checker_thread_func(void *arg) {
                 continue;
             }
 
+            // CRITICAL: Copy ALL client data locally at the START of iteration
+            // to prevent use-after-free if handle_reconnect frees the client during iteration
+            int client_id = client->client_id;
+            int socket_fd = client->socket_fd;
+            client_state_t state = client->state;
+            int waiting_for_pong = client->waiting_for_pong;
+            time_t last_ping_time = client->last_ping_time;
+            time_t last_activity = client->last_activity;
+            int is_disconnected = client->is_disconnected;
+            time_t disconnect_time = client->disconnect_time;
+            char nickname_copy[MAX_NICK_LENGTH];
+            strncpy(nickname_copy, client->nickname, sizeof(nickname_copy) - 1);
+            nickname_copy[sizeof(nickname_copy) - 1] = '\0';
+
             // Skip invalid/zombie clients
             // (socket_fd == -1 means disconnected/closed)
             // (socket_fd < -1 means being freed or invalid)
-            if (client->socket_fd < -1) {
+            if (socket_fd < -1) {
                 continue;
             }
 
             // Only check authenticated clients with valid socket
-            if (client->state >= STATE_AUTHENTICATED && client->socket_fd >= 0) {
+            if (state >= STATE_AUTHENTICATED && socket_fd >= 0) {
                 // Check if client hasn't responded to PING within PONG_TIMEOUT
-                if (client->waiting_for_pong) {
-                    time_t ping_wait_time = now - client->last_ping_time;
+                if (waiting_for_pong) {
+                    time_t ping_wait_time = now - last_ping_time;
 
                     if (ping_wait_time > PONG_TIMEOUT) {
                         logger_log(LOG_WARNING, "DEBUG: Client %d (%s) didn't respond to PING within %d seconds",
-                                  client->client_id, client->nickname, PONG_TIMEOUT);
+                                  client_id, nickname_copy, PONG_TIMEOUT);
 
                         // Mark client as disconnected for reconnect instead of immediate cleanup
-                        if (!client->is_disconnected) {
+                        if (!is_disconnected) {
                             client->is_disconnected = 1;
                             client->disconnect_time = now;
                             logger_log(LOG_INFO, "DEBUG: Client %d (%s) marked as disconnected due to PONG timeout, will wait %ds for reconnect",
-                                      client->client_id, client->nickname, RECONNECT_TIMEOUT);
+                                      client_id, nickname_copy, RECONNECT_TIMEOUT);
                         }
 
                         // Close socket to trigger cleanup (but keep client in list)
@@ -367,12 +381,12 @@ static void* timeout_checker_thread_func(void *arg) {
                 }
 
                 // Also check for general inactivity (2 minutes)
-                time_t inactive_time = now - client->last_activity;
+                time_t inactive_time = now - last_activity;
                 int timeout_threshold = 120;  // 2 minutes
 
                 if (inactive_time > timeout_threshold) {
                     logger_log(LOG_WARNING, "Client %d (%s) timed out (inactive for %ld seconds)",
-                              client->client_id, client->nickname, inactive_time);
+                              client_id, nickname_copy, inactive_time);
 
                     // Use shutdown() instead of close() to avoid closing recycled FDs
                     int fd = client->socket_fd;
@@ -384,18 +398,18 @@ static void* timeout_checker_thread_func(void *arg) {
             }
 
             // Check for disconnected players waiting for reconnect
-            if (client->is_disconnected && client->socket_fd == -1) {
-                time_t disconnect_duration = now - client->disconnect_time;
+            if (is_disconnected && socket_fd == -1) {
+                time_t disconnect_duration = now - disconnect_time;
 
                 // Log every 10 seconds to show progress
                 if (disconnect_duration % 10 == 0 && disconnect_duration > 0) {
                     logger_log(LOG_INFO, "DEBUG: Client %d (%s) waiting for reconnect: %ld/%d seconds",
-                              client->client_id, client->nickname, disconnect_duration, RECONNECT_TIMEOUT);
+                              client_id, nickname_copy, disconnect_duration, RECONNECT_TIMEOUT);
                 }
 
                 if (disconnect_duration > RECONNECT_TIMEOUT) {
                     logger_log(LOG_WARNING, "DEBUG: Client %d (%s) reconnect timeout expired (%ld seconds), ending game with forfeit",
-                              client->client_id, client->nickname, disconnect_duration);
+                              client_id, nickname_copy, disconnect_duration);
 
                     // Get room and game
                     room_t *room = client->room;
@@ -481,7 +495,7 @@ static void* timeout_checker_thread_func(void *arg) {
 
                     // Clean up disconnected client
                     logger_log(LOG_INFO, "Client %d (%s) cleaned up after reconnect timeout",
-                              client->client_id, client->nickname);
+                              client_id, nickname_copy);
                     client_list_remove(client);
                     free(client);
 

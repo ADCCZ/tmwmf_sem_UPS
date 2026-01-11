@@ -43,12 +43,15 @@ void room_system_shutdown(void) {
             if (rooms[i] != NULL) {
                 room_t *room = rooms[i];
 
-                // Clear player references (inline, no need for room_destroy)
-                for (int j = 0; j < MAX_PLAYERS_PER_ROOM; j++) {
-                    if (room->players[j] != NULL) {
-                        room->players[j]->room = NULL;
-                        room->players[j]->state = STATE_IN_LOBBY;
-                    }
+                // CRITICAL: Do NOT access room->players[] - clients may be already freed!
+                // Client pointers in room->players[] may be dangling pointers after client_list operations.
+
+                // Free game if exists (prevent memory leak)
+                if (room->game != NULL) {
+                    game_t *game = (game_t *)room->game;
+                    logger_log(LOG_INFO, "Room %d: Freeing game during shutdown", room->room_id);
+                    game_destroy(game);
+                    room->game = NULL;
                 }
 
                 logger_log(LOG_INFO, "Room %d destroyed during shutdown", room->room_id);

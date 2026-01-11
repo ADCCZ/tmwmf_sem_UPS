@@ -42,7 +42,11 @@
       "Bash(for const in \"ERR_NICK_IN_USE\" \"ERR_NOT_YOUR_TURN\" \"ERR_NOT_IMPLEMENTED\" \"PING_INTERVAL\")",
       "Bash(do echo -n \"$const: \")",
       "Bash(done)",
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "Bash(pdflatex:*)",
+      "Bash(git config:*)",
+      "Bash(zip -r:*)",
+      "Bash(unzip:*)"
     ],
     "deny": [],
     "ask": []

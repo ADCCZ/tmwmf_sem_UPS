@@ -485,19 +485,3 @@ C->S: PONG
 - Validace všech vstupů  
 
 ---
-
-## 13. SHRNUTÍ KLÍČOVÝCH VLASTNOSTÍ
-
-✅ Textový, čitelný, snadno laditelný  
-✅ Jasná struktura zpráv  
-✅ Každý požadavek má odpověď  
-✅ Podpora lobby a více místností  
-✅ Řešení krátkodobých i dlouhodobých výpadků  
-✅ Keepalive (PING/PONG)  
-✅ Robustní error-handling  
-✅ Broadcast zprávy  
-✅ Jasný stavový model  
-✅ Rozšiřitelný design  
-✅ Bez závislostí na externích knihovnách  
-
----

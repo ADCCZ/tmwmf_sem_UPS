@@ -406,10 +406,15 @@ int game_format_state_message(game_t *game, char *buffer, int buffer_size) {
                            game->player_scores[i]);
     }
 
-    // Add card states (0=hidden, value=matched)
+    // Add card states (0=hidden, +value=matched, -value=revealed)
     for (int i = 0; i < game->total_cards; i++) {
         if (game->cards[i].state == CARD_MATCHED) {
+            // Positive value = matched card (green, disabled)
             offset += snprintf(buffer + offset, buffer_size - offset, " %d",
+                              game->cards[i].value);
+        } else if (game->cards[i].state == CARD_REVEALED) {
+            // Negative value = revealed card (yellow, enabled)
+            offset += snprintf(buffer + offset, buffer_size - offset, " -%d",
                               game->cards[i].value);
         } else {
             offset += snprintf(buffer + offset, buffer_size - offset, " 0");

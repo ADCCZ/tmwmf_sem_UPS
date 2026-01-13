@@ -269,8 +269,8 @@ Přechody mezi stavy jsou řízeny protokolovými zprávami (např. \texttt{WELC
 \draw[->, very thick] (room) -- node[above] {\scriptsize GAME\_START} (game);
 
 % RECONNECT mechanismus
-\draw[->, thick, dashed] (game) -- node[left, align=center] {\scriptsize timeout\\[-1mm]\scriptsize výpadek} (short);
-\draw[->, thick, dashed] (short) to[bend left=20] node[below left, align=center] {\scriptsize RECONNECT\\[-1mm]\scriptsize +GAME\_STATE} (game);
+\draw[->, thick, dashed] (game) -- node[left, align=center] {\scriptsize timeout\\\scriptsize výpadek} (short);
+\draw[->, thick, dashed] (short) to[bend left=20] node[below left, align=center] {\scriptsize RECONNECT\\\scriptsize +GAME\_STATE} (game);
 \draw[->, thick] (short) -- node[above] {\scriptsize >90s} (long);
 
 % NÁVRAT do lobby

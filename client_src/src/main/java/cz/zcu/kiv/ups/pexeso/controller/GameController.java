@@ -292,42 +292,55 @@ public class GameController implements MessageListener {
     }
 
     private void revealCard(int index, int value, String playerName) {
-        Platform.runLater(() -> {
-            if (index < 0 || index >= cardButtons.length) return;
+        if (index < 0 || index >= cardButtons.length) return;
 
-            cardValues[index] = value;
+        // Update state IMMEDIATELY (not async) to avoid race conditions
+        cardValues[index] = value;
+        flippedIndices.add(index);
+        flippedThisTurn++;
+
+        // Update GUI asynchronously
+        Platform.runLater(() -> {
             cardButtons[index].setText(String.valueOf(value));
             cardButtons[index].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
                                         "-fx-background-color: #FFC107;");
-
-            flippedIndices.add(index);
-            flippedThisTurn++;
         });
     }
 
     private void handleMatch(String playerName, int score) {
+        // Copy flippedIndices before clearing (to avoid race condition)
+        final List<Integer> matchedCards = new ArrayList<>(flippedIndices);
+
+        // Update state IMMEDIATELY (not async)
+        for (int index : matchedCards) {
+            cardMatched[index] = true;
+        }
+        playerScores.put(playerName, score);
+
+        // Reset flip state immediately
+        flippedIndices.clear();
+        flippedThisTurn = 0;
+
+        // Update GUI asynchronously
         Platform.runLater(() -> {
-            // Mark cards as matched
-            for (int index : flippedIndices) {
-                cardMatched[index] = true;
+            for (int index : matchedCards) {
                 cardButtons[index].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
                                            "-fx-background-color: #4CAF50; -fx-text-fill: white;");
                 cardButtons[index].setDisable(true);
             }
-
-            // Update score
-            playerScores.put(playerName, score);
             updatePlayers();
-
-            // Reset flip state
-            flippedIndices.clear();
-            flippedThisTurn = 0;
-
             updateStatus(playerName + " found a match!");
         });
     }
 
     private void handleMismatch(String nextPlayer) {
+        // Copy flippedIndices before clearing (to avoid race condition)
+        final List<Integer> mismatchedCards = new ArrayList<>(flippedIndices);
+
+        // Reset flip state IMMEDIATELY
+        flippedIndices.clear();
+        flippedThisTurn = 0;
+
         Platform.runLater(() -> {
             // Update turn information
             if (nextPlayer != null && !nextPlayer.isEmpty()) {
@@ -353,15 +366,12 @@ public class GameController implements MessageListener {
                 }
 
                 Platform.runLater(() -> {
-                    for (int index : flippedIndices) {
+                    for (int index : mismatchedCards) {
                         if (!cardMatched[index]) {
                             cardButtons[index].setText("?");
                             cardButtons[index].setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
                         }
                     }
-
-                    flippedIndices.clear();
-                    flippedThisTurn = 0;
                 });
             }).start();
         });
@@ -570,12 +580,16 @@ public class GameController implements MessageListener {
             }
 
             // Restore card states
+            // Format: 0=hidden, +value=matched (green), -value=revealed (yellow)
+            flippedIndices.clear();
+            flippedThisTurn = 0;
+
             int cardIndex = index;
             for (int i = 0; i < boardSize * boardSize && cardIndex < parts.length; i++, cardIndex++) {
                 int cardValue = Integer.parseInt(parts[cardIndex]);
 
                 if (cardValue > 0) {
-                    // Card is matched
+                    // Positive value = matched card (green, disabled)
                     final int finalIndex = i;
                     final int finalValue = cardValue;
 
@@ -587,6 +601,20 @@ public class GameController implements MessageListener {
                         cardButtons[finalIndex].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
                                                      "-fx-background-color: #4CAF50; -fx-text-fill: white;");
                         cardButtons[finalIndex].setDisable(true);
+                    });
+                } else if (cardValue < 0) {
+                    // Negative value = currently revealed card (yellow, enabled)
+                    final int finalIndex = i;
+                    final int finalValue = Math.abs(cardValue);
+
+                    cardValues[i] = finalValue;
+                    flippedIndices.add(i);
+                    flippedThisTurn++;
+
+                    Platform.runLater(() -> {
+                        cardButtons[finalIndex].setText(String.valueOf(finalValue));
+                        cardButtons[finalIndex].setStyle("-fx-font-size: 24px; -fx-font-weight: bold; " +
+                                                     "-fx-background-color: #FFC107;");
                     });
                 }
             }

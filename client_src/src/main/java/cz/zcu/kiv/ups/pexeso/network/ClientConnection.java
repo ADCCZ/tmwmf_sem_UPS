@@ -31,6 +31,8 @@ public class ClientConnection {
     private volatile boolean reconnecting = false;
     private volatile boolean userDisconnect = false;  // Track user-initiated disconnect
     private volatile boolean serverShutdown = false;  // Track server shutdown
+    private int invalidMessageCount = 0;  // Track invalid messages (disconnect after 3)
+    private static final int MAX_INVALID_MESSAGES = 3;
 
     /**
      * Create a new client connection
@@ -53,6 +55,7 @@ public class ClientConnection {
         this.serverPort = port;
         this.userDisconnect = false;  // Reset user disconnect flag for new connection
         this.serverShutdown = false;  // Reset server shutdown flag for new connection
+        this.invalidMessageCount = 0;  // Reset invalid message counter for new connection
 
         Logger.info("Connecting to " + host + ":" + port);
 
@@ -131,6 +134,34 @@ public class ClientConnection {
     }
 
     /**
+     * Validate message: reject binary or malformed data
+     * Only allows printable ASCII characters (32-126) and common whitespace
+     */
+    private boolean isValidMessage(String message) {
+        if (message == null) {
+            return false;
+        }
+
+        // Prevent DoS: reject extremely long messages
+        if (message.length() > 8192) {
+            Logger.warning("Rejected oversized message: " + message.length() + " bytes");
+            return false;
+        }
+
+        // Check for valid ASCII printable characters only
+        for (int i = 0; i < message.length(); i++) {
+            char c = message.charAt(i);
+            // Allow: printable ASCII (32-126), space, tab, and underscore
+            if (c < 32 || c > 126) {
+                Logger.warning("Invalid character detected: 0x" + Integer.toHexString(c));
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Reader thread loop - reads messages from server
      */
     private void readerLoop() {
@@ -138,6 +169,26 @@ public class ClientConnection {
             String line;
             while (running && (line = in.readLine()) != null) {
                 final String message = line.trim();
+
+                // Validate message: reject binary/non-printable data
+                if (!isValidMessage(message)) {
+                    invalidMessageCount++;
+                    Logger.warning("Received invalid/binary data from server (attempt " +
+                                   invalidMessageCount + "/" + MAX_INVALID_MESSAGES + ")");
+
+                    if (invalidMessageCount >= MAX_INVALID_MESSAGES) {
+                        Logger.warning("Too many invalid messages, disconnecting");
+                        running = false;
+                        if (listener != null) {
+                            listener.onDisconnected("Server sent too many invalid messages");
+                        }
+                        break;
+                    }
+                    continue;  // Skip this message, try next one
+                }
+
+                // Valid message received - reset invalid counter
+                invalidMessageCount = 0;
 
                 if (!message.isEmpty()) {
                     // Check for server shutdown before passing to listener

@@ -498,20 +498,23 @@ static void handle_flip(client_t *client, const char *params) {
 
             // Check if game is finished
             if (game_is_finished(game)) {
-                // Get winners
+                // Get winners (for logging)
                 client_t *winners[MAX_PLAYERS_PER_ROOM];
                 int winner_count = game_get_winners(game, winners);
 
-                // Format GAME_END message
+                // Format GAME_END message - send ALL players with their scores
                 char game_end_msg[MAX_MESSAGE_LENGTH];
                 int offset = snprintf(game_end_msg, sizeof(game_end_msg), "GAME_END");
 
-                for (int i = 0; i < winner_count; i++) {
-                    offset += snprintf(game_end_msg + offset,
-                                       sizeof(game_end_msg) - offset,
-                                       " %s %d",
-                                       winners[i]->nickname,
-                                       game->player_scores[i]);
+                // Send all players (not just winners!)
+                for (int i = 0; i < game->player_count; i++) {
+                    if (game->players[i] != NULL) {
+                        offset += snprintf(game_end_msg + offset,
+                                           sizeof(game_end_msg) - offset,
+                                           " %s %d",
+                                           game->players[i]->nickname,
+                                           game->player_scores[i]);
+                    }
                 }
 
                 room_broadcast(room, game_end_msg);

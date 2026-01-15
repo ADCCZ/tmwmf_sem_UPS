@@ -12,10 +12,10 @@ public class ProtocolConstants {
     public static final String CMD_JOIN_ROOM = "JOIN_ROOM";
     public static final String CMD_LEAVE_ROOM = "LEAVE_ROOM";
     public static final String CMD_START_GAME = "START_GAME";
+    public static final String CMD_READY = "READY";
     public static final String CMD_FLIP = "FLIP";
     public static final String CMD_PONG = "PONG";
     public static final String CMD_RECONNECT = "RECONNECT";
-    public static final String CMD_QUIT = "QUIT";
 
     // Server to Client commands
     public static final String CMD_WELCOME = "WELCOME";
@@ -24,13 +24,19 @@ public class ProtocolConstants {
     public static final String CMD_ROOM_JOINED = "ROOM_JOINED";
     public static final String CMD_PLAYER_JOINED = "PLAYER_JOINED";
     public static final String CMD_PLAYER_LEFT = "PLAYER_LEFT";
+    public static final String CMD_PLAYER_READY = "PLAYER_READY";
+    public static final String CMD_PLAYER_RECONNECTED = "PLAYER_RECONNECTED";
+    public static final String CMD_ROOM_OWNER_CHANGED = "ROOM_OWNER_CHANGED";
+    public static final String CMD_GAME_CREATED = "GAME_CREATED";
     public static final String CMD_GAME_START = "GAME_START";
     public static final String CMD_YOUR_TURN = "YOUR_TURN";
     public static final String CMD_CARD_REVEAL = "CARD_REVEAL";
     public static final String CMD_MATCH = "MATCH";
     public static final String CMD_MISMATCH = "MISMATCH";
     public static final String CMD_GAME_END = "GAME_END";
+    public static final String CMD_GAME_END_FORFEIT = "GAME_END_FORFEIT";
     public static final String CMD_GAME_STATE = "GAME_STATE";
+    public static final String CMD_LEFT_ROOM = "LEFT_ROOM";
     public static final String CMD_PING = "PING";
     public static final String CMD_PLAYER_DISCONNECTED = "PLAYER_DISCONNECTED";
     public static final String CMD_SERVER_SHUTDOWN = "SERVER_SHUTDOWN";

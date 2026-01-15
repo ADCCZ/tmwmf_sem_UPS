@@ -2,6 +2,7 @@ package cz.zcu.kiv.ups.pexeso.controller;
 
 import cz.zcu.kiv.ups.pexeso.network.ClientConnection;
 import cz.zcu.kiv.ups.pexeso.network.MessageListener;
+import cz.zcu.kiv.ups.pexeso.protocol.ProtocolConstants;
 import cz.zcu.kiv.ups.pexeso.util.Logger;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -146,7 +147,7 @@ public class GameController implements MessageListener {
         }
 
         // Send with error checking
-        boolean sent = connection.sendMessage("READY");
+        boolean sent = connection.sendMessage(ProtocolConstants.CMD_READY);
         if (sent) {
             readyButton.setDisable(true);
             isReady = true;
@@ -401,6 +402,10 @@ public class GameController implements MessageListener {
             case "PLAYER_JOINED":
                 if (parts.length > 1) {
                     String player = parts[1];
+                    if (player == null || player.trim().isEmpty()) {
+                        Logger.warning("Empty player name in PLAYER_JOINED");
+                        break;
+                    }
                     updateStatus(player + " joined the room");
                 }
                 break;
@@ -408,6 +413,10 @@ public class GameController implements MessageListener {
             case "PLAYER_LEFT":
                 if (parts.length > 1) {
                     String player = parts[1];
+                    if (player == null || player.trim().isEmpty()) {
+                        Logger.warning("Empty player name in PLAYER_LEFT");
+                        break;
+                    }
                     updateStatus(player + " left the room");
                 }
                 break;
@@ -453,14 +462,19 @@ public class GameController implements MessageListener {
                 // Format: GAME_CREATED <board_size> <message>
                 if (parts.length > 1) {
                     try {
-                        boardSize = Integer.parseInt(parts[1]);
+                        int size = Integer.parseInt(parts[1]);
+                        if (size < 2 || size > 10) {
+                            Logger.warning("Invalid board size in GAME_CREATED: " + size);
+                            break;
+                        }
+                        boardSize = size;
                         Platform.runLater(() -> {
                             readyButton.setVisible(true);
                             startGameButton.setVisible(false);
                         });
                         updateStatus("Game created! Click READY when prepared.");
                     } catch (NumberFormatException e) {
-                        e.printStackTrace();
+                        Logger.warning("Invalid number format in GAME_CREATED");
                     }
                 }
                 break;
@@ -468,6 +482,10 @@ public class GameController implements MessageListener {
             case "PLAYER_READY":
                 if (parts.length > 1) {
                     String player = parts[1];
+                    if (player == null || player.trim().isEmpty()) {
+                        Logger.warning("Empty player name in PLAYER_READY");
+                        break;
+                    }
                     updateStatus(player + " is ready");
                 }
                 break;
@@ -582,7 +600,18 @@ public class GameController implements MessageListener {
 
         try {
             int size = Integer.parseInt(parts[1]);
+
+            // Validate board size
+            if (size < 2 || size > 10) {
+                Logger.warning("Invalid board size in GAME_STATE: " + size);
+                return;
+            }
+
             String currentPlayerNick = parts[2];
+            if (currentPlayerNick == null || currentPlayerNick.trim().isEmpty()) {
+                Logger.warning("Empty current player in GAME_STATE");
+                return;
+            }
 
             // Parse players and scores
             players.clear();
@@ -593,10 +622,24 @@ public class GameController implements MessageListener {
                 if (index + 1 >= parts.length) break;
 
                 String playerName = parts[index++];
+                if (playerName == null || playerName.trim().isEmpty()) {
+                    Logger.warning("Empty player name in GAME_STATE");
+                    continue;
+                }
+
                 int score = Integer.parseInt(parts[index++]);
+                if (score < 0) {
+                    Logger.warning("Invalid score in GAME_STATE: " + score);
+                    continue;
+                }
 
                 players.add(playerName);
                 playerScores.put(playerName, score);
+            }
+
+            if (players.isEmpty()) {
+                Logger.warning("No valid players in GAME_STATE");
+                return;
             }
 
             // Initialize board if not already done
@@ -670,13 +713,28 @@ public class GameController implements MessageListener {
         try {
             int size = Integer.parseInt(parts[1]);
 
+            // Validate board size
+            if (size < 2 || size > 10) {
+                Logger.warning("Invalid board size in GAME_START: " + size);
+                return;
+            }
+
             players.clear();
             playerScores.clear();
 
             for (int i = 2; i < parts.length; i++) {
                 String player = parts[i];
+                if (player == null || player.trim().isEmpty()) {
+                    Logger.warning("Empty player name in GAME_START");
+                    continue;
+                }
                 players.add(player);
                 playerScores.put(player, 0);
+            }
+
+            if (players.isEmpty()) {
+                Logger.warning("No valid players in GAME_START");
+                return;
             }
 
             initializeBoard(size);
@@ -699,7 +757,7 @@ public class GameController implements MessageListener {
             });
 
         } catch (NumberFormatException e) {
-            e.printStackTrace();
+            Logger.warning("Invalid number format in GAME_START");
         }
     }
 
@@ -720,22 +778,42 @@ public class GameController implements MessageListener {
 
         int maxScore = -1;
         List<String> winners = new ArrayList<>();
+        boolean validData = false;
 
         for (int i = 1; i < parts.length; i += 2) {
             if (i + 1 < parts.length) {
-                String player = parts[i];
-                int score = Integer.parseInt(parts[i + 1]);
+                try {
+                    String player = parts[i];
+                    if (player == null || player.trim().isEmpty()) {
+                        Logger.warning("Empty player name in GAME_END");
+                        continue;
+                    }
 
-                resultMsg.append(String.format("%s: %d\n", player, score));
+                    int score = Integer.parseInt(parts[i + 1]);
+                    if (score < 0) {
+                        Logger.warning("Invalid score in GAME_END: " + score);
+                        continue;
+                    }
 
-                if (score > maxScore) {
-                    maxScore = score;
-                    winners.clear();
-                    winners.add(player);
-                } else if (score == maxScore) {
-                    winners.add(player);
+                    validData = true;
+                    resultMsg.append(String.format("%s: %d\n", player, score));
+
+                    if (score > maxScore) {
+                        maxScore = score;
+                        winners.clear();
+                        winners.add(player);
+                    } else if (score == maxScore) {
+                        winners.add(player);
+                    }
+                } catch (NumberFormatException e) {
+                    Logger.warning("Invalid number format in GAME_END");
                 }
             }
+        }
+
+        if (!validData) {
+            Logger.warning("No valid player data in GAME_END");
+            return;
         }
 
         resultMsg.append("\nWinner(s): ");

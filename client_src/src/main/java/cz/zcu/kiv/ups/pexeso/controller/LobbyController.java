@@ -301,11 +301,30 @@ public class LobbyController implements MessageListener {
 
                 try {
                     int id = Integer.parseInt(parts[index++]);
+                    if (id < 0) {
+                        Logger.warning("Invalid room ID in ROOM_LIST: " + id);
+                        continue;
+                    }
+
                     String name = parts[index++];
+                    if (name == null || name.trim().isEmpty()) {
+                        Logger.warning("Empty room name in ROOM_LIST");
+                        continue;
+                    }
+
                     int current = Integer.parseInt(parts[index++]);
                     int max = Integer.parseInt(parts[index++]);
+                    if (current < 0 || max < 1 || max > 10 || current > max) {
+                        Logger.warning("Invalid player count in ROOM_LIST: " + current + "/" + max);
+                        continue;
+                    }
+
                     String state = parts[index++];
                     int boardSize = Integer.parseInt(parts[index++]);
+                    if (boardSize < 2 || boardSize > 10) {
+                        Logger.warning("Invalid board size in ROOM_LIST: " + boardSize);
+                        continue;
+                    }
 
                     // Skip finished games - they should not appear in lobby
                     if (!"FINISHED".equals(state)) {
@@ -313,7 +332,7 @@ public class LobbyController implements MessageListener {
                         activeRooms++;
                     }
                 } catch (Exception e) {
-                    System.err.println("Error parsing room: " + e.getMessage());
+                    Logger.warning("Error parsing room in ROOM_LIST");
                 }
             }
 

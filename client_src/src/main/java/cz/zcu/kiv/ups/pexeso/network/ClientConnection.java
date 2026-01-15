@@ -4,6 +4,8 @@ import cz.zcu.kiv.ups.pexeso.protocol.ProtocolConstants;
 import cz.zcu.kiv.ups.pexeso.util.Logger;
 
 import java.io.BufferedReader;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
@@ -31,8 +33,36 @@ public class ClientConnection {
     private volatile boolean reconnecting = false;
     private volatile boolean userDisconnect = false;  // Track user-initiated disconnect
     private volatile boolean serverShutdown = false;  // Track server shutdown
+    private volatile boolean invalidDataDisconnect = false;  // Track disconnect due to invalid data
     private int invalidMessageCount = 0;  // Track invalid messages (disconnect after 3)
     private static final int MAX_INVALID_MESSAGES = 3;
+
+    // Valid protocol commands from server
+    private static final HashSet<String> VALID_SERVER_COMMANDS = new HashSet<>(Arrays.asList(
+        ProtocolConstants.CMD_WELCOME,
+        ProtocolConstants.CMD_ROOM_LIST,
+        ProtocolConstants.CMD_ROOM_CREATED,
+        ProtocolConstants.CMD_ROOM_JOINED,
+        ProtocolConstants.CMD_PLAYER_JOINED,
+        ProtocolConstants.CMD_PLAYER_LEFT,
+        ProtocolConstants.CMD_PLAYER_READY,
+        ProtocolConstants.CMD_PLAYER_RECONNECTED,
+        ProtocolConstants.CMD_ROOM_OWNER_CHANGED,
+        ProtocolConstants.CMD_GAME_CREATED,
+        ProtocolConstants.CMD_GAME_START,
+        ProtocolConstants.CMD_YOUR_TURN,
+        ProtocolConstants.CMD_CARD_REVEAL,
+        ProtocolConstants.CMD_MATCH,
+        ProtocolConstants.CMD_MISMATCH,
+        ProtocolConstants.CMD_GAME_END,
+        ProtocolConstants.CMD_GAME_END_FORFEIT,
+        ProtocolConstants.CMD_GAME_STATE,
+        ProtocolConstants.CMD_LEFT_ROOM,
+        ProtocolConstants.CMD_PING,
+        ProtocolConstants.CMD_PLAYER_DISCONNECTED,
+        ProtocolConstants.CMD_SERVER_SHUTDOWN,
+        ProtocolConstants.CMD_ERROR
+    ));
 
     /**
      * Create a new client connection
@@ -55,6 +85,7 @@ public class ClientConnection {
         this.serverPort = port;
         this.userDisconnect = false;  // Reset user disconnect flag for new connection
         this.serverShutdown = false;  // Reset server shutdown flag for new connection
+        this.invalidDataDisconnect = false;  // Reset invalid data flag for new connection
         this.invalidMessageCount = 0;  // Reset invalid message counter for new connection
 
         Logger.info("Connecting to " + host + ":" + port);
@@ -162,6 +193,22 @@ public class ClientConnection {
     }
 
     /**
+     * Validate that message starts with a known protocol command
+     * Returns true if valid, false if unknown command
+     */
+    private boolean isValidProtocolCommand(String message) {
+        if (message == null || message.isEmpty()) {
+            return false;
+        }
+
+        // Extract command (first word)
+        String command = message.split(" ")[0];
+
+        // Check if command is in the set of valid commands
+        return VALID_SERVER_COMMANDS.contains(command);
+    }
+
+    /**
      * Reader thread loop - reads messages from server
      */
     private void readerLoop() {
@@ -178,9 +225,28 @@ public class ClientConnection {
 
                     if (invalidMessageCount >= MAX_INVALID_MESSAGES) {
                         Logger.warning("Too many invalid messages, disconnecting");
+                        invalidDataDisconnect = true;  // Prevent auto-reconnect
                         running = false;
                         if (listener != null) {
                             listener.onDisconnected("Server sent too many invalid messages");
+                        }
+                        break;
+                    }
+                    continue;  // Skip this message, try next one
+                }
+
+                // Validate protocol command: reject unknown commands
+                if (!isValidProtocolCommand(message)) {
+                    invalidMessageCount++;
+                    Logger.warning("Received unknown protocol command from server (attempt " +
+                                   invalidMessageCount + "/" + MAX_INVALID_MESSAGES + ")");
+
+                    if (invalidMessageCount >= MAX_INVALID_MESSAGES) {
+                        Logger.warning("Too many invalid commands, disconnecting");
+                        invalidDataDisconnect = true;  // Prevent auto-reconnect
+                        running = false;
+                        if (listener != null) {
+                            listener.onDisconnected("Server sent too many invalid commands");
                         }
                         break;
                     }
@@ -211,7 +277,7 @@ public class ClientConnection {
             if (running) {
                 running = false;
                 // Only notify disconnect if auto-reconnect won't handle it
-                if (listener != null && (!autoReconnect || clientId <= 0 || userDisconnect || serverShutdown)) {
+                if (listener != null && (!autoReconnect || clientId <= 0 || userDisconnect || serverShutdown || invalidDataDisconnect)) {
                     listener.onDisconnected("Connection closed by server");
                 }
             }
@@ -237,8 +303,8 @@ public class ClientConnection {
             running = false;
             cleanup();
 
-            // Attempt automatic reconnect if enabled (but NOT if user disconnected or server shut down)
-            if (autoReconnect && clientId > 0 && !reconnecting && !userDisconnect && !serverShutdown) {
+            // Attempt automatic reconnect if enabled (but NOT if user disconnected, server shut down, or invalid data)
+            if (autoReconnect && clientId > 0 && !reconnecting && !userDisconnect && !serverShutdown && !invalidDataDisconnect) {
                 Logger.info("Auto-reconnect starting (client ID: " + clientId + ")");
                 // Notify user that reconnection is starting
                 if (listener != null) {

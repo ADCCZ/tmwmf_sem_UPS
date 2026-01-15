@@ -3,6 +3,7 @@ package cz.zcu.kiv.ups.pexeso.controller;
 import cz.zcu.kiv.ups.pexeso.model.Room;
 import cz.zcu.kiv.ups.pexeso.network.ClientConnection;
 import cz.zcu.kiv.ups.pexeso.network.MessageListener;
+import cz.zcu.kiv.ups.pexeso.util.Logger;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -273,7 +274,17 @@ public class LobbyController implements MessageListener {
         String[] parts = message.split(" ");
         if (parts.length < 2) return;
 
-        int count = Integer.parseInt(parts[1]);
+        int count;
+        try {
+            count = Integer.parseInt(parts[1]);
+            if (count < 0) {
+                Logger.warning("Invalid room count: " + count);
+                return;
+            }
+        } catch (NumberFormatException e) {
+            Logger.warning("Invalid number format in ROOM_LIST: " + message);
+            return;
+        }
 
         Platform.runLater(() -> {
             rooms.clear();
@@ -319,14 +330,23 @@ public class LobbyController implements MessageListener {
         String[] parts = message.split(" ");
         if (parts.length < 3) return;
 
-        int roomId = Integer.parseInt(parts[1]);
-        String roomName = parts[2];
+        try {
+            int roomId = Integer.parseInt(parts[1]);
+            String roomName = parts[2];
 
-        Platform.runLater(() -> {
-            updateStatus("Room created: " + roomName);
-            // Switch to game view
-            switchToGameView(roomId, roomName, true);
-        });
+            if (roomId < 0) {
+                Logger.warning("Invalid room ID in ROOM_CREATED: " + roomId);
+                return;
+            }
+
+            Platform.runLater(() -> {
+                updateStatus("Room created: " + roomName);
+                // Switch to game view
+                switchToGameView(roomId, roomName, true);
+            });
+        } catch (NumberFormatException e) {
+            Logger.warning("Invalid number format in ROOM_CREATED: " + message);
+        }
     }
 
     private void handleRoomJoined(String message) {
@@ -334,15 +354,23 @@ public class LobbyController implements MessageListener {
         String[] parts = message.split(" ");
         if (parts.length < 3) return;
 
-        int roomId = Integer.parseInt(parts[1]);
-        String roomName = parts[2];
+        try {
+            int roomId = Integer.parseInt(parts[1]);
+            String roomName = parts[2];
 
+            if (roomId < 0) {
+                Logger.warning("Invalid room ID in ROOM_JOINED: " + roomId);
+                return;
+            }
 
-        Platform.runLater(() -> {
-            updateStatus("Joined room: " + roomName);
-            // Switch to game view
-            switchToGameView(roomId, roomName, false);
-        });
+            Platform.runLater(() -> {
+                updateStatus("Joined room: " + roomName);
+                // Switch to game view
+                switchToGameView(roomId, roomName, false);
+            });
+        } catch (NumberFormatException e) {
+            Logger.warning("Invalid number format in ROOM_JOINED: " + message);
+        }
     }
 
     private void handleError(String message) {

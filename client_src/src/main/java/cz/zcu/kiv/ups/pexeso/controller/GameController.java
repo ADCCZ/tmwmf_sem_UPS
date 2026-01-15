@@ -2,6 +2,7 @@ package cz.zcu.kiv.ups.pexeso.controller;
 
 import cz.zcu.kiv.ups.pexeso.network.ClientConnection;
 import cz.zcu.kiv.ups.pexeso.network.MessageListener;
+import cz.zcu.kiv.ups.pexeso.util.Logger;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -491,9 +492,20 @@ public class GameController implements MessageListener {
                         int index = Integer.parseInt(parts[1]);
                         int value = Integer.parseInt(parts[2]);
                         String player = parts[3];
+
+                        // Validate ranges
+                        if (index < 0 || (cardButtons != null && index >= cardButtons.length)) {
+                            Logger.warning("Invalid card index in CARD_REVEAL: " + index);
+                            break;
+                        }
+                        if (value <= 0) {
+                            Logger.warning("Invalid card value in CARD_REVEAL: " + value);
+                            break;
+                        }
+
                         revealCard(index, value, player);
                     } catch (NumberFormatException e) {
-                        e.printStackTrace();
+                        Logger.warning("Invalid number format in CARD_REVEAL: " + message);
                     }
                 }
                 break;
@@ -501,9 +513,17 @@ public class GameController implements MessageListener {
             case "MATCH":
                 // Format: MATCH <player> <score>
                 if (parts.length >= 3) {
-                    String player = parts[1];
-                    int score = Integer.parseInt(parts[2]);
-                    handleMatch(player, score);
+                    try {
+                        String player = parts[1];
+                        int score = Integer.parseInt(parts[2]);
+                        if (score < 0) {
+                            Logger.warning("Invalid score in MATCH: " + score);
+                            break;
+                        }
+                        handleMatch(player, score);
+                    } catch (NumberFormatException e) {
+                        Logger.warning("Invalid number format in MATCH: " + message);
+                    }
                 }
                 break;
 
@@ -546,6 +566,11 @@ public class GameController implements MessageListener {
                     alert.setContentText(userFriendlyError);
                     alert.showAndWait();
                 });
+                break;
+
+            default:
+                // Unknown command - log and ignore
+                Logger.warning("Received unknown command from server: " + command);
                 break;
         }
     }
